@@ -1,6 +1,7 @@
 package io.github.excalibase.postgres.service;
 
 import io.github.excalibase.annotation.ExcalibaseService;
+import io.github.excalibase.cache.TTLCache;
 import io.github.excalibase.constant.SupportedDatabaseConstant;
 import io.github.excalibase.model.ColumnInfo;
 import io.github.excalibase.model.TableInfo;
@@ -8,11 +9,15 @@ import io.github.excalibase.exception.ValidationException;
 import io.github.excalibase.service.IValidationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -24,14 +29,24 @@ public class ValidationService implements IValidationService {
     private static final Logger log = LoggerFactory.getLogger(ValidationService.class);
     private final JdbcTemplate jdbcTemplate;
     private final DatabaseSchemaService schemaService;
+    private final TTLCache<PermissionKey, Boolean> permissionCache;
 
     // Maximum allowed values for security
     private static final int MAX_LIMIT = 1000;
     private static final int MAX_OFFSET = 1000000; // 1 million
 
-    public ValidationService(JdbcTemplate jdbcTemplate, DatabaseSchemaService schemaService) {
+    // Constructor for Spring dependency injection with @Value
+    @Autowired
+    public ValidationService(JdbcTemplate jdbcTemplate, DatabaseSchemaService schemaService,
+                            @Value("${app.permission-cache-ttl-seconds:300}") int permissionCacheTtlSeconds) {
         this.jdbcTemplate = jdbcTemplate;
         this.schemaService = schemaService;
+        this.permissionCache = new TTLCache<>(Duration.ofSeconds(permissionCacheTtlSeconds));
+    }
+
+    // Constructor for tests (without @Value)
+    public ValidationService(JdbcTemplate jdbcTemplate, DatabaseSchemaService schemaService) {
+        this(jdbcTemplate, schemaService, 300); // Default 5 minutes
     }
 
     /**
@@ -74,16 +89,41 @@ public class ValidationService implements IValidationService {
     }
 
     /**
-     * Check if current user has required permission on table
+     * Check if current user has required permission on table.
+     * Results are cached to reduce database load.
      */
     public boolean hasTablePermission(String tableName, String permission) {
         try {
-            String query = "SELECT has_table_privilege(current_user, ?, ?)";
-            Boolean hasPermission = jdbcTemplate.queryForObject(query, Boolean.class, tableName, permission);
-            return hasPermission != null && hasPermission;
+            String currentUser = getCurrentDatabaseUser();
+            PermissionKey key = new PermissionKey(currentUser, tableName, permission);
+
+            return permissionCache.computeIfAbsent(key, k -> {
+                try {
+                    String query = "SELECT has_table_privilege(current_user, ?, ?)";
+                    Boolean hasPermission = jdbcTemplate.queryForObject(query, Boolean.class, tableName, permission);
+                    log.debug("Permission check for user={}, table={}, permission={}: {}",
+                             currentUser, tableName, permission, hasPermission);
+                    return hasPermission != null && hasPermission;
+                } catch (Exception e) {
+                    log.warn("Failed to check table permission for {}: {}", tableName, e.getMessage());
+                    return true; // Fallback to allowing access if permission check fails
+                }
+            });
         } catch (Exception e) {
-            log.warn("Failed to check table permission for {}: {}", tableName, e.getMessage());
+            log.warn("Failed to check cached table permission for {}: {}", tableName, e.getMessage());
             return true; // Fallback to allowing access if permission check fails
+        }
+    }
+
+    /**
+     * Get the current database user for permission checks.
+     */
+    private String getCurrentDatabaseUser() {
+        try {
+            return jdbcTemplate.queryForObject("SELECT current_user", String.class);
+        } catch (Exception e) {
+            log.warn("Failed to get current database user: {}", e.getMessage());
+            return "unknown";
         }
     }
 
@@ -153,71 +193,6 @@ public class ValidationService implements IValidationService {
         if (!columnExists) {
             throw new IllegalArgumentException("Invalid column for ordering: " + orderBy);
         }
-    }
-
-    /**
-     * Validate enum value against PostgreSQL enum type
-     */
-    public String validateEnumValue(String enumTypeName, String value) {
-        try {
-            var validValues = schemaService.getEnumValues(enumTypeName);
-            if (!validValues.isEmpty() && !validValues.contains(value)) {
-                throw new IllegalArgumentException("Invalid enum value '" + value + "' for type '" + enumTypeName + "'. Valid values: " + validValues);
-            }
-            return value;
-        } catch (Exception e) {
-            log.warn("Failed to validate enum value '{}' for type '{}': {}", value, enumTypeName, e.getMessage());
-            return value; // Fallback to allowing the value
-        }
-    }
-
-    /**
-     * Validate network address (IP or CIDR format)
-     */
-    public String validateNetworkAddress(String address) {
-        if (address == null || address.trim().isEmpty()) {
-            throw new IllegalArgumentException("Network address cannot be empty");
-        }
-
-        String trimmed = address.trim();
-
-        // IPv4 address pattern (basic validation)
-        String ipv4Pattern = "^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:/[0-9]{1,2})?$";
-
-        // IPv6 address pattern (basic validation)
-        String ipv6Pattern = "^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::1$|^::$";
-
-        if (trimmed.matches(ipv4Pattern) || trimmed.matches(ipv6Pattern)) {
-            return trimmed;
-        }
-
-        throw new IllegalArgumentException("Invalid network address format: " + address);
-    }
-
-    /**
-     * Validate MAC address (supports both colon and dash separators, 6 and 8 byte formats)
-     */
-    public String validateMacAddress(String macAddress) {
-        if (macAddress == null || macAddress.trim().isEmpty()) {
-            throw new IllegalArgumentException("MAC address cannot be empty");
-        }
-
-        String trimmed = macAddress.trim();
-
-        // 6-byte MAC address patterns (MACADDR)
-        String mac6Colon = "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$";
-        String mac6Dash = "^([0-9a-fA-F]{2}-){5}[0-9a-fA-F]{2}$";
-
-        // 8-byte MAC address pattern (MACADDR8)
-        String mac8Colon = "^([0-9a-fA-F]{2}:){7}[0-9a-fA-F]{2}$";
-        String mac8Dash = "^([0-9a-fA-F]{2}-){7}[0-9a-fA-F]{2}$";
-
-        if (trimmed.matches(mac6Colon) || trimmed.matches(mac6Dash) ||
-                trimmed.matches(mac8Colon) || trimmed.matches(mac8Dash)) {
-            return trimmed;
-        }
-
-        throw new IllegalArgumentException("Invalid MAC address format: " + macAddress);
     }
 
     /**
@@ -372,5 +347,73 @@ public class ValidationService implements IValidationService {
 
     public int getMaxOffset() {
         return MAX_OFFSET;
+    }
+
+    /**
+     * Invalidate all permission cache entries.
+     * Useful for admin operations or when permissions are changed.
+     */
+    public void invalidatePermissionCache() {
+        permissionCache.clear();
+        log.info("Permission cache invalidated");
+    }
+
+    /**
+     * Invalidate permission cache entries for a specific table.
+     */
+    public void invalidatePermissionForTable(String tableName) {
+        // TTLCache doesn't support filtering by partial key, so we clear all
+        // In a production system, you might want a more sophisticated cache structure
+        permissionCache.clear();
+        log.info("Permission cache invalidated for table: {}", tableName);
+    }
+
+    /**
+     * Get permission cache statistics.
+     */
+    public Map<String, Object> getPermissionCacheStats() {
+        TTLCache.CacheStats stats = permissionCache.getStats();
+        return Map.of(
+            "totalEntries", stats.getTotalEntries(),
+            "validEntries", stats.getValidEntries(),
+            "expiredEntries", stats.getExpiredEntries(),
+            "ttlSeconds", stats.getTtl().getSeconds()
+        );
+    }
+
+    /**
+     * Cache key for permission checks.
+     * Composite key of (user, tableName, permission) ensures correct cache behavior.
+     */
+    private static class PermissionKey {
+        private final String user;
+        private final String tableName;
+        private final String permission;
+
+        public PermissionKey(String user, String tableName, String permission) {
+            this.user = user;
+            this.tableName = tableName;
+            this.permission = permission;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            PermissionKey that = (PermissionKey) o;
+            return Objects.equals(user, that.user) &&
+                   Objects.equals(tableName, that.tableName) &&
+                   Objects.equals(permission, that.permission);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(user, tableName, permission);
+        }
+
+        @Override
+        public String toString() {
+            return String.format("PermissionKey{user='%s', table='%s', permission='%s'}", user, tableName, permission);
+        }
     }
 }

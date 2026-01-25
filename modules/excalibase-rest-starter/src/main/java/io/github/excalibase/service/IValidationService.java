@@ -29,12 +29,6 @@ public interface IValidationService {
 
     void validateOrderByColumn(String orderBy, TableInfo tableInfo);
 
-    String validateEnumValue(String enumTypeName, String value);
-
-    String validateNetworkAddress(String address);
-
-    String validateMacAddress(String macAddress);
-
     void validateFilterValue(String value);
 
     void validateInOperatorValues(String inValues);

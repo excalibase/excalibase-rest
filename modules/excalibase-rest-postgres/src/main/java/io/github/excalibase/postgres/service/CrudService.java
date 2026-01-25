@@ -57,19 +57,6 @@ public class CrudService implements ICrudService {
         validationService.validateColumns(data.keySet(), tableInfo);
 
         // Validate and convert data types
-        Map<String, ColumnInfo> columnMap = tableInfo.getColumns().stream()
-            .collect(Collectors.toMap(ColumnInfo::getName, c -> c));
-        
-        for (Map.Entry<String, Object> entry : data.entrySet()) {
-            String columnName = entry.getKey();
-            ColumnInfo columnInfo = columnMap.get(columnName);
-            if (columnInfo != null && columnInfo.getType().startsWith("postgres_enum:") && entry.getValue() instanceof String) {
-                // Handle enum types - validate the value
-                String enumType = columnInfo.getType().substring("postgres_enum:".length());
-                validationService.validateEnumValue(enumType, (String) entry.getValue());
-            }
-        }
-
         // Build INSERT query
         List<String> columns = new ArrayList<>(data.keySet());
         List<Object> values = new ArrayList<>();

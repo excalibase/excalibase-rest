@@ -6,6 +6,7 @@ import io.github.excalibase.postgres.service.DatabaseSchemaService;
 import io.github.excalibase.postgres.service.OpenApiService;
 import io.github.excalibase.postgres.service.QueryComplexityService;
 import io.github.excalibase.postgres.service.RestApiService;
+import io.github.excalibase.postgres.service.ValidationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -37,12 +38,16 @@ public class RestApiController {
     private final OpenApiService openApiService;
     private final DatabaseSchemaService schemaService;
     private final QueryComplexityService complexityService;
+    private final ValidationService validationService;
+
     public RestApiController(RestApiService restApiService, OpenApiService openApiService,
-                           DatabaseSchemaService schemaService, QueryComplexityService complexityService) {
+                           DatabaseSchemaService schemaService, QueryComplexityService complexityService,
+                           ValidationService validationService) {
         this.restApiService = restApiService;
         this.openApiService = openApiService;
         this.schemaService = schemaService;
         this.complexityService = complexityService;
+        this.validationService = validationService;
     }
 
     // GET /api/v1/{table} - Get all records from a table with optional filtering, pagination, relationships
@@ -621,5 +626,90 @@ public class RestApiController {
 
             return columnInfo;
         }).toList();
+    }
+
+    // ========== Cache Management Endpoints ==========
+
+    /**
+     * POST /api/v1/admin/cache/invalidate - Invalidate all caches
+     *
+     * Clears both schema cache and permission cache.
+     * Useful when database permissions or schema changes are made.
+     */
+    @PostMapping("/admin/cache/invalidate")
+    public ResponseEntity<Map<String, Object>> invalidateCaches() {
+        try {
+            validationService.invalidatePermissionCache();
+            schemaService.invalidateSchemaCache();
+
+            return ResponseEntity.ok(Map.of(
+                "message", "All caches invalidated successfully",
+                "caches", List.of("permissions", "schema")
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to invalidate caches: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * GET /api/v1/admin/cache/stats - Get cache statistics
+     *
+     * Returns statistics for all caches including:
+     * - Permission cache (hit/miss rates, entry counts)
+     * - Schema cache (entry counts, TTL info)
+     */
+    @GetMapping("/admin/cache/stats")
+    public ResponseEntity<Map<String, Object>> getCacheStats() {
+        try {
+            Map<String, Object> permissionCacheStats = validationService.getPermissionCacheStats();
+            Map<String, Object> schemaCacheStats = schemaService.getSchemaCacheStats();
+
+            return ResponseEntity.ok(Map.of(
+                "permissionCache", permissionCacheStats,
+                "schemaCache", schemaCacheStats
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to get cache stats: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/v1/admin/cache/permissions/invalidate - Invalidate permission cache only
+     *
+     * Clears cached permission checks. Use when database permissions change.
+     */
+    @PostMapping("/admin/cache/permissions/invalidate")
+    public ResponseEntity<Map<String, Object>> invalidatePermissionCache() {
+        try {
+            validationService.invalidatePermissionCache();
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Permission cache invalidated successfully"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to invalidate permission cache: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/v1/admin/cache/schema/invalidate - Invalidate schema cache only
+     *
+     * Clears cached schema metadata. Use when database schema changes.
+     */
+    @PostMapping("/admin/cache/schema/invalidate")
+    public ResponseEntity<Map<String, Object>> invalidateSchemaCache() {
+        try {
+            schemaService.invalidateSchemaCache();
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Schema cache invalidated successfully"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to invalidate schema cache: " + e.getMessage()));
+        }
     }
 }

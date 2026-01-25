@@ -1,5 +1,6 @@
 package io.github.excalibase.postgres.service;
 
+import io.github.excalibase.constant.OperatorConstants;
 import io.github.excalibase.model.ColumnInfo;
 import io.github.excalibase.model.ForeignKeyInfo;
 import io.github.excalibase.model.SelectField;
@@ -48,14 +49,12 @@ public class RestApiService {
 
     @Value("${app.database-type:postgres}")
     private String databaseType;
-    
-    // Special parameters that are not database columns
-    private static final Set<String> CONTROL_PARAMETERS = Set.of(
-        "offset", "limit", "orderBy", "orderDirection", "select", "order", "expand",
-        "first", "after", "last", "before", "join", "fields", "include", "batch",
-        "query", "variables", "fragment", "alias", "groupBy", "having", "distinct",
-        "aggregate", "transform", "validate", "explain", "format", "stream"
-    );
+
+    @Value("${app.db-statement-timeout-ms:30000}")
+    private int statementTimeoutMs;
+
+    @Value("${app.db-max-rows:1000}")
+    private int dbMaxRows;
     
     // Constructor for direct service injection (used by tests and Spring)
     public RestApiService(JdbcTemplate jdbcTemplate, DatabaseSchemaService schemaService,
@@ -79,31 +78,44 @@ public class RestApiService {
         this.upsertService = upsertService;
         this.databaseType = databaseType;
         this.serviceLookup = null; // Not used in this constructor
+
+        // Initialize configuration with defaults for tests
+        // These will be overridden by @Value when Spring creates the bean
+        this.statementTimeoutMs = 30000; // 30 seconds default
+        this.dbMaxRows = 1000; // 1000 rows default
     }
 
 
-    public Map<String, Object> getRecords(String tableName, MultiValueMap<String, String> allParams, 
-                                        int offset, int limit, String orderBy, 
+    public Map<String, Object> getRecords(String tableName, MultiValueMap<String, String> allParams,
+                                        int offset, int limit, String orderBy,
                                         String orderDirection, String select, String expand) {
         // Security validations
         validationService.validatePaginationParams(offset, limit);
         if (tableName == null || tableName.trim().isEmpty()) {
             throw new IllegalArgumentException("Table name cannot be empty");
         }
-        
-        // Validate table exists and permissions
+
+        // Enforce PostgREST-style db-max-rows limit
+        if (limit > dbMaxRows) {
+            throw new IllegalArgumentException("Requested limit (" + limit + ") exceeds maximum allowed rows (" + dbMaxRows + ")");
+        }
+
+        // Validate table exists and permissions (uses permission cache)
         TableInfo tableInfo = validationService.getValidatedTableInfo(tableName);
         validationService.validateTablePermission(tableName, "SELECT");
-        
-        // Validate query complexity
+
+        // Validate query complexity (if enabled)
         complexityService.validateQueryComplexity(tableName, allParams, limit, expand);
+
+        // Apply PostgreSQL statement timeout for query protection
+        applyStatementTimeout();
 
         // Filter out control parameters to get only filter parameters
         MultiValueMap<String, String> filters = new org.springframework.util.LinkedMultiValueMap<>();
         if (allParams != null) {
             for (Map.Entry<String, List<String>> entry : allParams.entrySet()) {
                 String key = entry.getKey();
-                if (!CONTROL_PARAMETERS.contains(key)) {
+                if (!OperatorConstants.isControlParameter(key)) {
                     filters.put(key, entry.getValue());
                 }
             }
@@ -302,7 +314,7 @@ public class RestApiService {
         if (allParams != null) {
             for (Map.Entry<String, List<String>> entry : allParams.entrySet()) {
                 String key = entry.getKey();
-                if (!CONTROL_PARAMETERS.contains(key)) {
+                if (!OperatorConstants.isControlParameter(key)) {
                     filters.put(key, entry.getValue());
                 }
             }
@@ -482,19 +494,6 @@ public class RestApiService {
 
     public List<Map<String, Object>> upsertBulkRecords(String tableName, List<Map<String, Object>> dataList) {
         return upsertService.upsertBulkRecords(tableName, dataList);
-    }
-
-    // Validation methods - delegate to ValidationService
-    public String validateNetworkAddress(String address) {
-        return validationService.validateNetworkAddress(address);
-    }
-
-    public String validateMacAddress(String macAddress) {
-        return validationService.validateMacAddress(macAddress);
-    }
-
-    public String validateEnumValue(String enumTypeName, String value) {
-        return validationService.validateEnumValue(enumTypeName, value);
     }
 
     public String extractEnumTypeFromMessage(String message) {
@@ -694,11 +693,29 @@ public class RestApiService {
     public String extractColumnNameFromConstraint(String message, String constraintType) {
         return validationService.extractColumnNameFromConstraint(message, constraintType);
     }
-    
+
     /**
      * Handle SQL constraint violations
      */
     public void handleSqlConstraintViolation(SQLException e, String tableName, Map<String, Object> data) {
         validationService.handleSqlConstraintViolation(e, tableName, data);
+    }
+
+    /**
+     * Apply PostgreSQL statement timeout for query protection.
+     * This is a PostgREST-style protection mechanism that limits query execution time
+     * to prevent long-running queries from consuming excessive database resources.
+     *
+     * The timeout is applied per transaction and will cause PostgreSQL to cancel
+     * queries that exceed the configured duration.
+     */
+    private void applyStatementTimeout() {
+        try {
+            jdbcTemplate.execute("SET LOCAL statement_timeout = " + statementTimeoutMs);
+            log.debug("Applied statement timeout: {}ms", statementTimeoutMs);
+        } catch (Exception e) {
+            log.warn("Failed to set statement timeout: {}", e.getMessage());
+            // Don't fail the request if timeout setting fails
+        }
     }
 }

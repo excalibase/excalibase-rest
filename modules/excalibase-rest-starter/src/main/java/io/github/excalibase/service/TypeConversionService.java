@@ -139,9 +139,8 @@ public class TypeConversionService {
             
             // Handle PostgreSQL enhanced types
             if (columnType.startsWith(ColumnTypeConstant.POSTGRES_ENUM + ":")) {
-                // PostgreSQL enum type - validate against enum values
-                String enumTypeName = columnType.substring((ColumnTypeConstant.POSTGRES_ENUM + ":").length());
-                return validationService.validateEnumValue(enumTypeName, value);
+                // PostgreSQL enum type - PostgreSQL handles validation
+                return value;
             } else if (columnType.startsWith(ColumnTypeConstant.POSTGRES_COMPOSITE + ":")) {
                 // PostgreSQL composite type - keep as string for now (could be enhanced to parse JSON)
                 return value;

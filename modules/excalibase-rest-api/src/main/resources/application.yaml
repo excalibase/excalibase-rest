@@ -58,13 +58,18 @@ app:
   # Database configuration
   allowed-schema: public
   database-type: postgres
-  
+
   # Pagination configuration
   max-page-size: 1000
   default-page-size: 100
-  
+
   # Cache configuration
   schema-cache-ttl-seconds: 300 # 5 minutes
+  permission-cache-ttl-seconds: 300 # 5 minutes - caches database permission checks
+
+  # PostgREST-style query protection
+  db-statement-timeout-ms: 30000 # 30 seconds - PostgreSQL query execution timeout
+  db-max-rows: 1000 # Maximum rows that can be requested per query
   
   # CORS configuration
   cors:

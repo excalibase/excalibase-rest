@@ -268,6 +268,30 @@ public class DatabaseSchemaService {
     }
 
     /**
+     * Invalidate schema cache (alias for clearCache for API consistency)
+     */
+    public void invalidateSchemaCache() {
+        clearCache();
+    }
+
+    /**
+     * Get schema cache statistics
+     */
+    public Map<String, Object> getSchemaCacheStats() {
+        long currentTime = System.currentTimeMillis();
+        long cacheAge = lastCacheUpdate > 0 ? currentTime - lastCacheUpdate : 0;
+        boolean isCacheValid = schemaCache.containsKey(allowedSchema) && cacheAge < CACHE_TTL_MS;
+
+        return Map.of(
+            "totalEntries", schemaCache.size(),
+            "validEntries", isCacheValid ? schemaCache.size() : 0,
+            "cacheAgeMs", cacheAge,
+            "ttlMs", CACHE_TTL_MS,
+            "isValid", isCacheValid
+        );
+    }
+
+    /**
      * Get the current allowed schema
      */
     public String getAllowedSchema() {

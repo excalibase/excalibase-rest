@@ -41,13 +41,8 @@
         <!--jackson for JSON/YAML processing-->
         <jackson.version>2.18.2</jackson.version>
 
-        <!--groovy & spock for testing-->
-        <groovy-all.version>4.0.24</groovy-all.version>
-        <spock-core.version>2.4-M4-groovy-4.0</spock-core.version>
-        <groovy-json.version>4.0.24</groovy-json.version>
-
         <!--testing-->
-        <testcontainers.version>1.21.0</testcontainers.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
 
         <!--own modules-->
         <excalibase.version>0.0.1-SNAPSHOT</excalibase.version>
@@ -124,44 +119,8 @@
 
             <!--Testing-->
             <dependency>
-                <groupId>org.apache.groovy</groupId>
-                <artifactId>groovy-all</artifactId>
-                <version>4.0.24</version>
-                <type>pom</type>
-            </dependency>
-            <dependency>
-                <groupId>org.spockframework</groupId>
-                <artifactId>spock-core</artifactId>
-                <version>${spock-core.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.spockframework</groupId>
-                <artifactId>spock-spring</artifactId>
-                <version>${spock-core.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.apache.groovy</groupId>
-                <artifactId>groovy-json</artifactId>
-                <version>${groovy-json.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.testcontainers</groupId>
-                <artifactId>vault</artifactId>
-                <version>${testcontainers.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers</artifactId>
-                <version>${testcontainers.version}</version>
-                <scope>test</scope>
-            </dependency>
-            <dependency>
-                <groupId>org.testcontainers</groupId>
-                <artifactId>spock</artifactId>
                 <version>${testcontainers.version}</version>
                 <scope>test</scope>
             </dependency>
@@ -171,26 +130,17 @@
                 <version>${testcontainers.version}</version>
                 <scope>test</scope>
             </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${testcontainers.version}</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
     <build>
         <plugins>
-            <!--Groovy compilation for tests-->
-            <plugin>
-                <groupId>org.codehaus.gmavenplus</groupId>
-                <artifactId>gmavenplus-plugin</artifactId>
-                <version>4.0.1</version>
-                <executions>
-                    <execution>
-                        <goals>
-                            <goal>compile</goal>
-                            <goal>compileTests</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-
             <!--Code coverage-->
             <plugin>
                 <groupId>org.jacoco</groupId>
