@@ -6,12 +6,12 @@ import java.util.Set;
  * Centralized operator definitions and complexity weights for query analysis.
  *
  * This class serves as the single source of truth for:
- * 1. All supported PostgREST-style operators
+ * 1. All supported filter operators
  * 2. Complexity cost calculations for QueryComplexityService
  * 3. Control parameters that should be excluded from filter breadth calculation
  *
  * Complexity weights are based on typical PostgreSQL query costs:
- * - COMPARISON_COST (3): Simple indexed comparisons (=, <, >, etc.)
+ * - COMPARISON_COST (3): Simple indexed comparisons (=, &lt;, &gt;, etc.)
  * - STRING_PATTERN_COST (10): LIKE/ILIKE requires full scan if no index
  * - ARRAY_MEMBERSHIP_COST (5): IN clause cost per item
  * - ARRAY_OPERATION_COST (8): Array operations moderately expensive

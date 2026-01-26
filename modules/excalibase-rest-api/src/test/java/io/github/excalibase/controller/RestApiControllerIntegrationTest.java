@@ -426,7 +426,7 @@ class RestApiControllerIntegrationTest {
 
     @Test
     @Order(20)
-    void shouldHandlePostgRestStyleOrdering() throws Exception {
+    void shouldHandleOrderParameter() throws Exception {
         mockMvc.perform(get("/api/v1/users").param("order", "name.desc,id.asc"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray())

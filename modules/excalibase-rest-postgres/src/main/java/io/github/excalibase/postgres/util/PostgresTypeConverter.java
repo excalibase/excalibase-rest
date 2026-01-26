@@ -372,7 +372,7 @@ public class PostgresTypeConverter {
             return parseCompositeType(valueStr, columnType);
         }
         
-        // Handle enum types - return as simple string for PostgREST compatibility
+        // Handle enum types - return as simple string
         if (columnType.startsWith("postgres_enum:")) {
             return valueStr;
         }

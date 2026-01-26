@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Represents a parsed field from PostgREST-style select parameter
+ * Represents a parsed field from select parameter
  * Examples:
  * - "name" -> simple field
  * - "actors(name,age)" -> embedded resource with selected fields

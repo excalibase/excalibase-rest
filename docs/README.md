@@ -80,7 +80,6 @@ docs/
 │   ├── deployment.md          # Deployment guide
 │   └── testing.md             # Testing guide
 ├── comparison/                 # Comparisons
-│   ├── postgrest.md           # vs PostgREST
 │   └── hasura.md              # vs Hasura
 ├── stylesheets/               # Custom CSS
 │   └── extra.css

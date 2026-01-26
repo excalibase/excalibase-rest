@@ -43,7 +43,7 @@ help: ## Show this help message
 
 # Main targets
 .PHONY: e2e
-e2e: check-deps down build-image up test clean ## Complete e2e test suite (cleanup, build image, test, cleanup)
+e2e: down build-image up test clean ## Complete e2e test suite (cleanup, build image, test, cleanup)
 	@echo "$(GREEN)🎉 E2E testing completed successfully!$(NC)"
 
 .PHONY: dev

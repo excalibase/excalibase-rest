@@ -562,27 +562,27 @@ main() {
     fi
     
     # ==========================================
-    # POSTGREST-STYLE BULK OPERATIONS TESTS
+    # BULK OPERATIONS TESTS
     # ==========================================
-    
-    log_info "📦 Testing PostgREST-Style Operations..."
+
+    log_info "📦 Testing Bulk Operations..."
     
     local bulk_timestamp=$(date +%s)
     
-    # Test bulk CREATE via normal POST endpoint with array (PostgREST supports this)
+    # Test bulk CREATE via normal POST endpoint with array
     run_test "Bulk Create Multiple Records via Array" \
         "POST" \
         "$API_URL/customers" \
         "[
-            {\"name\": \"PostgREST User 1\", \"email\": \"pgrest1-${bulk_timestamp}@test.com\", \"tier\": \"bronze\"},
-            {\"name\": \"PostgREST User 2\", \"email\": \"pgrest2-${bulk_timestamp}@test.com\", \"tier\": \"silver\"},
-            {\"name\": \"PostgREST User 3\", \"email\": \"pgrest3-${bulk_timestamp}@test.com\", \"tier\": \"gold\"}
+            {\"name\": \"Bulk User 1\", \"email\": \"bulk1-${bulk_timestamp}@test.com\", \"tier\": \"bronze\"},
+            {\"name\": \"Bulk User 2\", \"email\": \"bulk2-${bulk_timestamp}@test.com\", \"tier\": \"silver\"},
+            {\"name\": \"Bulk User 3\", \"email\": \"bulk3-${bulk_timestamp}@test.com\", \"tier\": \"gold\"}
         ]" \
         "201" \
         '.count >= 3'
-    
-    # Test bulk UPDATE via query filters (PostgREST horizontal filtering)
-    run_test "Bulk Update via Query Filters (PostgREST Style)" \
+
+    # Test bulk UPDATE via query filters (horizontal filtering)
+    run_test "Bulk Update via Query Filters" \
         "PUT" \
         "$API_URL/customers?tier=eq.bronze" \
         "{\"tier\": \"silver\"}" \
@@ -592,15 +592,15 @@ main() {
     # Test bulk UPDATE with more specific filters
     run_test "Bulk Update with Email Filter" \
         "PUT" \
-        "$API_URL/customers?email=like.pgrest1-${bulk_timestamp}%25" \
-        "{\"name\": \"Updated PostgREST User 1\"}" \
+        "$API_URL/customers?email=like.bulk1-${bulk_timestamp}%25" \
+        "{\"name\": \"Updated Bulk User 1\"}" \
         "200" \
         '.updatedCount >= 0'
-    
-    # Test bulk DELETE via query filters (PostgREST horizontal filtering)
-    run_test "Bulk Delete via Query Filters (PostgREST Style)" \
+
+    # Test bulk DELETE via query filters (horizontal filtering)
+    run_test "Bulk Delete via Query Filters" \
         "DELETE" \
-        "$API_URL/customers?email=like.pgrest%25${bulk_timestamp}%25" \
+        "$API_URL/customers?email=like.bulk%25${bulk_timestamp}%25" \
         "" \
         "200" \
         '.deletedCount >= 0'
@@ -616,7 +616,7 @@ main() {
         "400" \
         '.error != null'
     
-    # Test error handling for PostgREST-style operations
+    # Test error handling for bulk operations
     run_test "Bulk Create - Empty Array Error" \
         "POST" \
         "$API_URL/customers" \

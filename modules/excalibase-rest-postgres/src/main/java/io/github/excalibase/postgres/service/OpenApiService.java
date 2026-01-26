@@ -514,7 +514,7 @@ public class OpenApiService {
             "name", "order",
             "in", "query",
             "required", false,
-            "description", "PostgREST-style ordering: column.direction,column2.direction",
+            "description", "Ordering parameter: column.direction,column2.direction",
             "schema", Map.of("type", "string"),
             "example", "created_at.desc,name.asc"
         ));
@@ -543,7 +543,7 @@ public class OpenApiService {
                 "name", column.getName(),
                 "in", "query",
                 "required", false,
-                "description", "Filter by " + column.getName() + " using PostgREST operators (eq.value, gt.value, like.value, etc.)",
+                "description", "Filter by " + column.getName() + " using operators (eq.value, gt.value, like.value, etc.)",
                 "schema", Map.of("type", "string"),
                 "example", getExampleFilterValue(column)
             ));

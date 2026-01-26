@@ -10,6 +10,7 @@ import io.github.excalibase.service.FilterService;
 import io.github.excalibase.service.ICrudService;
 import io.github.excalibase.service.IQueryBuilderService;
 import io.github.excalibase.service.IValidationService;
+import io.github.excalibase.service.ServiceLookup;
 import io.github.excalibase.service.TypeConversionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,7 +96,7 @@ public class RestApiService {
             throw new IllegalArgumentException("Table name cannot be empty");
         }
 
-        // Enforce PostgREST-style db-max-rows limit
+        // Enforce db-max-rows limit
         if (limit > dbMaxRows) {
             throw new IllegalArgumentException("Requested limit (" + limit + ") exceeds maximum allowed rows (" + dbMaxRows + ")");
         }
@@ -143,7 +144,7 @@ public class RestApiService {
             query.append(" ORDER BY ").append(orderBy).append(" ").append(direction);
         }
         
-        // Support PostgREST-style ordering with "order" parameter
+        // Support "order" parameter for ordering
         String order = allParams != null ? allParams.getFirst("order") : null;
         if (order != null && !order.trim().isEmpty() && (orderBy == null || orderBy.trim().isEmpty())) {
             List<String> orderClauses = queryBuilderService.parseOrderBy(order, tableInfo);
@@ -165,7 +166,7 @@ public class RestApiService {
         
         // Handle enhanced select with embedded fields or legacy expand parameter
         if (select != null && !select.trim().isEmpty()) {
-            // Parse select parameter for PostgREST-style embedding
+            // Parse select parameter for relationship embedding
             List<SelectField> selectFields = selectParserService.parseSelect(select);
             selectParserService.parseEmbeddedFilters(selectFields, allParams);
             
@@ -249,7 +250,7 @@ public class RestApiService {
         
         // Handle enhanced select with embedded fields or legacy expand parameter
         if (select != null && !select.trim().isEmpty()) {
-            // Parse select parameter for PostgREST-style embedding
+            // Parse select parameter for relationship embedding
             List<SelectField> selectFields = selectParserService.parseSelect(select);
             // Note: For single record, we don't have allParams, so no embedded filters
             
@@ -392,7 +393,7 @@ public class RestApiService {
         
         // Handle enhanced select with embedded fields or legacy expand parameter
         if (select != null && !select.trim().isEmpty()) {
-            // Parse select parameter for PostgREST-style embedding
+            // Parse select parameter for relationship embedding
             List<SelectField> selectFields = selectParserService.parseSelect(select);
             selectParserService.parseEmbeddedFilters(selectFields, allParams);
             
@@ -703,7 +704,7 @@ public class RestApiService {
 
     /**
      * Apply PostgreSQL statement timeout for query protection.
-     * This is a PostgREST-style protection mechanism that limits query execution time
+     * This protection mechanism limits query execution time
      * to prevent long-running queries from consuming excessive database resources.
      *
      * The timeout is applied per transaction and will cause PostgreSQL to cancel

@@ -31,7 +31,7 @@ public class FilterService {
     }
 
     /**
-     * Parse filters in PostgREST format: column=operator.value
+     * Parse filters in format: column=operator.value
      * Also supports OR conditions: or=(age.gte.18,student.is.true)
      */
     public List<String> parseFilters(MultiValueMap<String, String> filters, List<Object> params, TableInfo tableInfo) {

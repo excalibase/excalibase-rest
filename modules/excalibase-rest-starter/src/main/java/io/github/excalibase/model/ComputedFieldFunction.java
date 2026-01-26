@@ -17,8 +17,8 @@ import java.util.List;
  * $$ LANGUAGE sql STABLE;
  * </pre>
  *
- * <p>This follows PostgREST's computed field pattern where functions with a single
- * table-type parameter are automatically discovered and made available as fields.
+ * <p>Functions with a single table-type parameter are automatically discovered
+ * and made available as computed fields.
  */
 public class ComputedFieldFunction {
 

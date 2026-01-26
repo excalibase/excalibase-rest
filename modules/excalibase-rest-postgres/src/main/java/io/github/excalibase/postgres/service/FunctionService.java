@@ -21,8 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * - Computed fields (functions with table row parameters)
  * - RPC (Remote Procedure Call) for arbitrary functions
  *
- * Combines best of PostgREST (auto-discovery, auto-embedding) and
- * GraphQL (proven discovery SQL, execution patterns).
+ * Supports auto-discovery, auto-embedding, and proven execution patterns.
  */
 @Service
 public class FunctionService {
@@ -204,7 +203,7 @@ public class FunctionService {
     }
 
     /**
-     * Add computed fields to a record (PostgREST style auto-embedding).
+     * Add computed fields to a record with auto-embedding.
      *
      * @param tableName The table name
      * @param record    The record to enhance
@@ -311,7 +310,7 @@ public class FunctionService {
     }
 
     /**
-     * Execute an RPC function call (PostgREST /rpc/ style).
+     * Execute an RPC function call.
      *
      * @param functionName Function name
      * @param parameters   Function parameters as key-value map

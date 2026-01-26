@@ -58,7 +58,7 @@ make dev-teardown
 - **No GraphQL dependencies**: Pure REST API implementation
 - **PostgreSQL focused**: Optimized for PostgreSQL features and types
 - **Auto-generated endpoints**: Creates REST endpoints from database schema
-- **PostgREST-style filtering**: Advanced filtering operators
+- **Advanced filtering**: Comprehensive filtering operators
 - **OpenAPI 3.0**: Auto-generated API documentation
 
 ### Key Components
@@ -143,7 +143,7 @@ app:
 - **Deletion**: `DELETE /api/v1/{table}/{id}` - Delete record
 
 ### Filtering and Querying
-- **PostgREST syntax**: `?column=operator.value`
+- **Query syntax**: `?column=operator.value`
 - **OR conditions**: `?or=(col1.op.val1,col2.op.val2)`
 - **Field selection**: `?select=col1,col2`
 - **Relationships**: `?expand=related_table`

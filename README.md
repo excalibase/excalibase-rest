@@ -458,13 +458,11 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 - Spring Boot team for the excellent framework
 - PostgreSQL community for the robust database
-- PostgREST project for inspiring our filtering syntax
 - GraphQL community for pagination and filtering patterns
 
 ## 🔗 Related Projects
 
 - **[Excalibase GraphQL](https://github.com/excalibase/excalibase-graphql)** - GraphQL version of this project
-- **[PostgREST](https://postgrest.org/)** - Inspiration for REST API design
 - **[Hasura](https://hasura.io/)** - GraphQL engine for databases
 
 ---

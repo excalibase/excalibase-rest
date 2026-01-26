@@ -18,7 +18,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Enhanced relationship service that supports PostgREST-style nested filtering and column selection
+ * Enhanced relationship service that supports nested filtering and column selection
  */
 @Service
 public class EnhancedRelationshipService {

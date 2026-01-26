@@ -13,7 +13,7 @@ import java.util.stream.Collectors;
 
 /**
  * Service for handling aggregate functions (COUNT, SUM, AVG, MIN, MAX).
- * Supports both PostgREST-style inline aggregates and dedicated aggregate endpoints.
+ * Supports both inline aggregates and dedicated aggregate endpoints.
  */
 @Service
 public class AggregationService {
@@ -138,7 +138,7 @@ public class AggregationService {
     }
 
     /**
-     * Parse and execute inline aggregates from select parameter (PostgREST style).
+     * Parse and execute inline aggregates from select parameter.
      * Examples: "amount.sum()", "count()", "customer_id,amount.sum()"
      *
      * @param tableName    The table name

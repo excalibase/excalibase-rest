@@ -52,7 +52,7 @@ DELETE /api/v1/users/123
 
 ### Filtering
 
-Filter records using PostgREST-compatible syntax:
+Filter records using query parameter syntax:
 
 ```
 ?{column}={operator}.{value}

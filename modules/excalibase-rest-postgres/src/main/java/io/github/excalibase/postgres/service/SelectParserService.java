@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * Service to parse PostgREST-style select parameters
+ * Service to parse select parameters
  * Examples:
  * - "name,age" -> [SelectField("name"), SelectField("age")]
  * - "name,actors(first_name,last_name)" -> [SelectField("name"), SelectField("actors", [SelectField("first_name"), SelectField("last_name")])]
@@ -27,8 +27,8 @@ public class SelectParserService {
     private static final Pattern EMBEDDED_PATTERN = Pattern.compile("([a-zA-Z_][a-zA-Z0-9_]*)\\((.*)\\)");
     
     /**
-     * Parse PostgREST-style select parameter into SelectField objects
-     * 
+     * Parse select parameter into SelectField objects
+     *
      * @param selectParam The select parameter string (e.g., "name,actors(first_name,age)")
      * @return List of parsed SelectField objects
      */

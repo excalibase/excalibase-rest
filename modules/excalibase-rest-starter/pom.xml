@@ -25,6 +25,13 @@
             <artifactId>spring-boot-starter-logging</artifactId>
         </dependency>
 
+        <!--Jakarta Servlet API (for IUserIdExtractor interface)-->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!--Jackson for JSON processing-->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

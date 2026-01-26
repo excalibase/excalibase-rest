@@ -38,7 +38,7 @@ public class UpsertService {
 
     /**
      * Upsert a single record (INSERT ... ON CONFLICT DO UPDATE)
-     * PostgREST-style upsert with conflict resolution
+     * Upsert with conflict resolution
      */
     public Map<String, Object> upsertRecord(String tableName, Map<String, Object> data) {
         // Validate input

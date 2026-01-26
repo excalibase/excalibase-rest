@@ -61,21 +61,18 @@ public class RestApiController {
         this.functionService = functionService;
     }
 
-    // GET /api/v1/{table} - Get all records from a table with optional filtering, pagination, relationships, inline aggregates
     @GetMapping("/{table}")
     public ResponseEntity<Map<String, Object>> getRecords(
             @PathVariable String table,
             @RequestParam MultiValueMap<String, String> allParams) {
         try {
-            // Extract control parameters with defaults
             int offset = Integer.parseInt(allParams.getFirst("offset") != null ? allParams.getFirst("offset") : "0");
             int limit = Integer.parseInt(allParams.getFirst("limit") != null ? allParams.getFirst("limit") : "100");
             String orderBy = allParams.getFirst("orderBy");
             String orderDirection = allParams.getFirst("orderDirection") != null ? allParams.getFirst("orderDirection") : "asc";
             String select = allParams.getFirst("select");
-            String expand = allParams.getFirst("expand"); // Relationship expansion
+            String expand = allParams.getFirst("expand");
 
-            // Cursor-based pagination (GraphQL Connections style)
             String first = allParams.getFirst("first");
             String after = allParams.getFirst("after");
             String last = allParams.getFirst("last");
@@ -83,21 +80,17 @@ public class RestApiController {
 
             Map<String, Object> result;
 
-            // Check if select contains inline aggregates (PostgREST style)
-            // Examples: ?select=count() or ?select=amount.sum(),count() or ?select=status,count()
-            if (select != null && containsAggregateFunction(select)) {
-                // Route to inline aggregates
+
+            if (containsAggregateFunction(select)) {
                 List<Map<String, Object>> aggregateResults = aggregationService.getInlineAggregates(
                     table, select, allParams, null
                 );
 
-                // Wrap in standard response format
                 result = new HashMap<>();
                 result.put("data", aggregateResults);
                 return ResponseEntity.ok(result);
             }
 
-            // Check if using cursor-based pagination
             if (first != null || after != null || last != null || before != null) {
                 result = restApiService.getRecordsWithCursor(table, allParams, first, after, last, before, orderBy, orderDirection, select, expand);
             } else {
@@ -122,7 +115,6 @@ public class RestApiController {
             return false;
         }
 
-        // Check for aggregate function patterns: function() or column.function()
         return select.contains("count()") ||
                select.contains(".sum()") ||
                select.contains(".avg()") ||
@@ -130,7 +122,6 @@ public class RestApiController {
                select.contains(".max()");
     }
 
-    // GET /api/v1/{table}/{id} - Get a specific record by primary key with relationships
     @GetMapping("/{table}/{id}")
     public ResponseEntity<Map<String, Object>> getRecord(
             @PathVariable String table,
@@ -162,10 +153,8 @@ public class RestApiController {
             @RequestParam(required = false) String prefer) {
 
         try {
-            // Check if upsert is requested via prefer parameter (PostgREST style)
             boolean isUpsert = "resolution=merge-duplicates".equals(prefer);
 
-            // Check if it's bulk creation (array) or single creation (object)
             if (data instanceof List) {
                 @SuppressWarnings("unchecked")
                 List<Map<String, Object>> bulkData = (List<Map<String, Object>>) data;
@@ -230,7 +219,6 @@ public class RestApiController {
             @RequestBody Object data) {
 
         try {
-            // Basic security validation
             if (data == null) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("error", "Request body cannot be empty"));
@@ -268,7 +256,7 @@ public class RestApiController {
                     }
                     return ResponseEntity.ok(result);
                 } else {
-                    // Check if we have query filters for PostgREST-style bulk update
+                    // Check if we have query filters for bulk update
                     MultiValueMap<String, String> filters = new org.springframework.util.LinkedMultiValueMap<>();
 
                     if (allParams != null) {
@@ -285,7 +273,7 @@ public class RestApiController {
                     }
 
                     if (!filters.isEmpty()) {
-                        // PostgREST-style bulk update: PUT /table?column=value with update data in body
+                        // Bulk update: PUT /table?column=value with update data in body
                         Map<String, Object> result = restApiService.updateRecordsByFilters(table, filters, mapData);
                         return ResponseEntity.ok(result);
                     } else {
@@ -342,7 +330,7 @@ public class RestApiController {
     }
 
     // DELETE /api/v1/{table}/{id} - Delete a specific record
-    // DELETE /api/v1/{table} - Delete records by query filters (PostgREST horizontal filtering)
+    // DELETE /api/v1/{table} - Delete records by query filters (horizontal filtering)
     @DeleteMapping({"/{table}/{id}", "/{table}"})
     public ResponseEntity<Map<String, Object>> deleteRecord(
             @PathVariable String table,
@@ -359,7 +347,7 @@ public class RestApiController {
                 }
                 return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
             } else {
-                // PostgREST-style horizontal filtering: DELETE /table?column=value
+                // Horizontal filtering: DELETE /table?column=value
                 // Filter out control parameters to get only filter parameters (same as in RestApiService)
                 MultiValueMap<String, String> filters = new org.springframework.util.LinkedMultiValueMap<>();
 
@@ -765,7 +753,7 @@ public class RestApiController {
      *
      * Examples:
      * - GET /orders/aggregate?status=eq.completed
-     * - GET /orders/aggregate?status=eq.completed&functions=count,sum&columns=amount,tax
+     * - GET /orders/aggregate?status=eq.completed&amp;functions=count,sum&amp;columns=amount,tax
      *
      * Response format:
      * {
@@ -808,7 +796,7 @@ public class RestApiController {
     // ==================== RPC ENDPOINTS ====================
 
     /**
-     * POST /api/v1/rpc/{function} - Call a PostgreSQL function (PostgREST style)
+     * POST /api/v1/rpc/{function} - Call a PostgreSQL function
      *
      * Execute any database function with JSON parameters.
      *
@@ -854,7 +842,7 @@ public class RestApiController {
      *
      * Examples:
      * - GET /rpc/get_user_stats?user_id=123
-     * - GET /rpc/calculate_tax?amount=100&rate=0.15
+     * - GET /rpc/calculate_tax?amount=100&amp;rate=0.15
      */
     @GetMapping("/rpc/{function}")
     public ResponseEntity<Object> callFunctionGet(
