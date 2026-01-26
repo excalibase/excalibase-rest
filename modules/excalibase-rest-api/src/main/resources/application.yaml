@@ -103,6 +103,29 @@ app:
     max-breadth: 50
     complexity-analysis-enabled: true
 
+  # Aggregation configuration
+  aggregates:
+    enabled: true
+    inline-enabled: true               # Enable PostgREST-style ?select=col.sum()
+    dedicated-endpoint: true            # Enable /aggregate endpoint
+    max-aggregates-per-query: 10
+    default-functions: count,sum,avg,min,max
+
+  # Computed fields configuration (PostgREST style)
+  computed-fields:
+    enabled: true
+    auto-include: true                  # Auto-embed in responses (PostgREST style)
+    cache-ttl-seconds: 300             # Cache computed field results
+    max-per-query: 20                  # Max computed fields per request
+    discovery-cache-ttl-seconds: 3600  # Cache function discovery results
+
+  # RPC (Remote Procedure Call) configuration
+  rpc:
+    enabled: true
+    allowed-functions: "*"             # "*" = all, or comma-separated list
+    max-parameters: 50                 # Max function parameters
+    timeout-seconds: 30                # Function execution timeout
+
 # Logging configuration
 logging:
   level:

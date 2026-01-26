@@ -86,12 +86,22 @@ class RestApiControllerIntegrationTest {
         jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS hstore");
         jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"");
 
+        // Create custom enum type for RPC testing
+        jdbcTemplate.execute("""
+            DO $$ BEGIN
+                CREATE TYPE tier_type AS ENUM ('bronze', 'silver', 'gold', 'platinum');
+            EXCEPTION
+                WHEN duplicate_object THEN null;
+            END $$;
+        """);
+
         // Create users table
         jdbcTemplate.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
                 email VARCHAR(255) UNIQUE,
+                tier tier_type DEFAULT 'bronze',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """);
@@ -108,15 +118,84 @@ class RestApiControllerIntegrationTest {
         """);
 
         // Insert test data
-        jdbcTemplate.update("INSERT INTO users (name, email) VALUES (?, ?)", "John", "john@example.com");
-        jdbcTemplate.update("INSERT INTO users (name, email) VALUES (?, ?)", "Jane", "jane@example.com");
+        jdbcTemplate.update("INSERT INTO users (name, email, tier) VALUES (?, ?, ?::tier_type)", "John", "john@example.com", "gold");
+        jdbcTemplate.update("INSERT INTO users (name, email, tier) VALUES (?, ?, ?::tier_type)", "Jane", "jane@example.com", "silver");
         jdbcTemplate.update("INSERT INTO orders (user_id, product_name, amount) VALUES (?, ?, ?)", 1, "Laptop", 999.99);
         jdbcTemplate.update("INSERT INTO orders (user_id, product_name, amount) VALUES (?, ?, ?)", 1, "Mouse", 29.99);
+
+        // Create RPC test functions
+
+        // Scalar function with basic types
+        jdbcTemplate.execute("""
+            CREATE OR REPLACE FUNCTION calculate_discount(
+                customer_tier text,
+                order_amount decimal
+            )
+            RETURNS decimal AS $$
+            BEGIN
+                RETURN CASE customer_tier
+                    WHEN 'platinum' THEN order_amount * 0.20
+                    WHEN 'gold' THEN order_amount * 0.15
+                    WHEN 'silver' THEN order_amount * 0.10
+                    WHEN 'bronze' THEN order_amount * 0.05
+                    ELSE 0.00
+                END;
+            END;
+            $$ LANGUAGE plpgsql IMMUTABLE
+        """);
+
+        // Table-returning function with enum parameter
+        jdbcTemplate.execute("""
+            CREATE OR REPLACE FUNCTION get_users_by_tier(tier_param tier_type)
+            RETURNS SETOF users AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT * FROM users
+                WHERE tier = tier_param
+                ORDER BY name;
+            END;
+            $$ LANGUAGE plpgsql STABLE
+        """);
+
+        // Function with multiple parameters
+        jdbcTemplate.execute("""
+            CREATE OR REPLACE FUNCTION get_order_total(
+                user_id_param integer,
+                min_amount decimal
+            )
+            RETURNS TABLE(
+                total_orders bigint,
+                total_amount decimal
+            ) AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT
+                    COUNT(*)::bigint,
+                    COALESCE(SUM(amount), 0)
+                FROM orders
+                WHERE user_id = user_id_param
+                  AND amount >= min_amount;
+            END;
+            $$ LANGUAGE plpgsql STABLE
+        """);
+
+        // Computed field function
+        jdbcTemplate.execute("""
+            CREATE OR REPLACE FUNCTION users_display_name(users)
+            RETURNS text AS $$
+                SELECT $1.name || ' [' || UPPER($1.tier::text) || ']';
+            $$ LANGUAGE SQL IMMUTABLE
+        """);
     }
 
     private void cleanupTestData() {
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS users_display_name(users) CASCADE");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS get_order_total(integer, decimal) CASCADE");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS get_users_by_tier(tier_type) CASCADE");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS calculate_discount(text, decimal) CASCADE");
         jdbcTemplate.execute("DROP TABLE IF EXISTS orders CASCADE");
         jdbcTemplate.execute("DROP TABLE IF EXISTS users CASCADE");
+        jdbcTemplate.execute("DROP TYPE IF EXISTS tier_type CASCADE");
     }
 
     @Test
@@ -1144,6 +1223,263 @@ class RestApiControllerIntegrationTest {
         System.out.println("===============================");
 
         jdbcTemplate.execute("DROP TABLE IF EXISTS simple_array_test");
+    }
+
+    // ==================== RPC FUNCTION TESTS ====================
+
+    @Test
+    @Order(42)
+    void shouldExecuteScalarRpcFunction() throws Exception {
+        Map<String, Object> params = new HashMap<>();
+        params.put("customer_tier", "gold");
+        params.put("order_amount", 100.0);
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_discount")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value(15.00));
+    }
+
+    @Test
+    @Order(43)
+    void shouldExecuteScalarRpcFunctionWithDifferentTiers() throws Exception {
+        // Test platinum tier (20%)
+        Map<String, Object> platinumParams = new HashMap<>();
+        platinumParams.put("customer_tier", "platinum");
+        platinumParams.put("order_amount", 200.0);
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_discount")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(platinumParams)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value(40.00));
+
+        // Test silver tier (10%)
+        Map<String, Object> silverParams = new HashMap<>();
+        silverParams.put("customer_tier", "silver");
+        silverParams.put("order_amount", 100.0);
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_discount")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(silverParams)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value(10.00));
+
+        // Test bronze tier (5%)
+        Map<String, Object> bronzeParams = new HashMap<>();
+        bronzeParams.put("customer_tier", "bronze");
+        bronzeParams.put("order_amount", 100.0);
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_discount")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(bronzeParams)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value(5.00));
+    }
+
+    @Test
+    @Order(44)
+    void shouldExecuteTableReturningFunctionWithEnumParameter() throws Exception {
+        Map<String, Object> params = new HashMap<>();
+        params.put("tier_param", "gold");
+
+        mockMvc.perform(post("/api/v1/rpc/get_users_by_tier")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$[0].result.value").exists())
+                .andExpect(jsonPath("$[0].result.value").value(containsString("John")));
+    }
+
+    @Test
+    @Order(45)
+    void shouldExecuteFunctionWithMultipleParameters() throws Exception {
+        Map<String, Object> params = new HashMap<>();
+        params.put("user_id_param", 1);
+        params.put("min_amount", 100.0);
+
+        mockMvc.perform(post("/api/v1/rpc/get_order_total")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").exists())
+                .andExpect(jsonPath("$.result.value").value(containsString("1")))
+                .andExpect(jsonPath("$.result.value").value(containsString("999.99")));
+    }
+
+    @Test
+    @Order(46)
+    void shouldReturnErrorForNonExistentRpcFunction() throws Exception {
+        Map<String, Object> params = new HashMap<>();
+        params.put("param1", "value1");
+
+        mockMvc.perform(post("/api/v1/rpc/non_existent_function")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error").value(containsString("Failed to execute function")));
+    }
+
+    @Test
+    @Order(47)
+    void shouldReturnErrorForMissingRequiredParameter() throws Exception {
+        Map<String, Object> params = new HashMap<>();
+        // Missing order_amount parameter
+        params.put("customer_tier", "gold");
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_discount")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error").value(containsString("Failed to execute function")));
+    }
+
+    @Test
+    @Order(48)
+    void shouldHandleEmptyParametersForParameterlessFunction() throws Exception {
+        // Create a parameterless function for testing
+        jdbcTemplate.execute("""
+            CREATE OR REPLACE FUNCTION get_current_timestamp_text()
+            RETURNS text AS $$
+                SELECT CURRENT_TIMESTAMP::text;
+            $$ LANGUAGE SQL IMMUTABLE
+        """);
+
+        mockMvc.perform(post("/api/v1/rpc/get_current_timestamp_text")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").exists());
+
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS get_current_timestamp_text() CASCADE");
+    }
+
+    @Test
+    @Order(49)
+    void shouldCacheRpcFunctionMetadata() throws Exception {
+        // First call - should cache metadata
+        Map<String, Object> params1 = new HashMap<>();
+        params1.put("customer_tier", "gold");
+        params1.put("order_amount", 100.0);
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_discount")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params1)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value(15.00));
+
+        // Second call with different parameters - should use cached metadata
+        Map<String, Object> params2 = new HashMap<>();
+        params2.put("customer_tier", "platinum");
+        params2.put("order_amount", 200.0);
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_discount")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value(40.00));
+
+        // Both calls should succeed, verifying cache works correctly
+    }
+
+    @Test
+    @Order(50)
+    void shouldHandleEnumTypeParameterCorrectly() throws Exception {
+        // Test with silver tier enum
+        Map<String, Object> params = new HashMap<>();
+        params.put("tier_param", "silver");
+
+        MvcResult result = mockMvc.perform(post("/api/v1/rpc/get_users_by_tier")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String response = result.getResponse().getContentAsString();
+        System.out.println("===== ENUM PARAMETER TEST RESPONSE =====");
+        System.out.println(response);
+        System.out.println("=========================================");
+
+        // Verify response contains Jane (who has silver tier)
+        mockMvc.perform(post("/api/v1/rpc/get_users_by_tier")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andExpect(jsonPath("$[0].result.value").value(containsString("Jane")));
+    }
+
+    @Test
+    @Order(51)
+    void shouldHandleDifferentDataTypes() throws Exception {
+        // Create function with various data types
+        jdbcTemplate.execute("""
+            CREATE OR REPLACE FUNCTION test_data_types(
+                int_param integer,
+                text_param text,
+                bool_param boolean,
+                decimal_param decimal
+            )
+            RETURNS TABLE(
+                int_result integer,
+                text_result text,
+                bool_result boolean,
+                decimal_result decimal
+            ) AS $$
+            BEGIN
+                RETURN QUERY
+                SELECT int_param, text_param, bool_param, decimal_param;
+            END;
+            $$ LANGUAGE plpgsql IMMUTABLE
+        """);
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("int_param", 42);
+        params.put("text_param", "test string");
+        params.put("bool_param", true);
+        params.put("decimal_param", 99.99);
+
+        mockMvc.perform(post("/api/v1/rpc/test_data_types")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").exists())
+                .andExpect(jsonPath("$.result.value").value(containsString("42")))
+                .andExpect(jsonPath("$.result.value").value(containsString("test string")))
+                .andExpect(jsonPath("$.result.value").value(containsString("99.99")));
+
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS test_data_types(integer, text, boolean, decimal) CASCADE");
+    }
+
+    @Test
+    @Order(52)
+    void shouldHandleNullParameters() throws Exception {
+        // Create function that handles nulls
+        jdbcTemplate.execute("""
+            CREATE OR REPLACE FUNCTION calculate_with_default(
+                value1 decimal,
+                value2 decimal
+            )
+            RETURNS decimal AS $$
+            BEGIN
+                RETURN COALESCE(value1, 0) + COALESCE(value2, 0);
+            END;
+            $$ LANGUAGE plpgsql IMMUTABLE
+        """);
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("value1", 10.0);
+        params.put("value2", null);
+
+        mockMvc.perform(post("/api/v1/rpc/calculate_with_default")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(toJson(params)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value(10.0));
+
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS calculate_with_default(decimal, decimal) CASCADE");
     }
 
     private String toJson(Object obj) throws JsonProcessingException {

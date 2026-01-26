@@ -2,11 +2,15 @@ package io.github.excalibase.controller;
 
 import io.github.excalibase.exception.ValidationException;
 import io.github.excalibase.model.TableInfo;
+import io.github.excalibase.postgres.service.AggregationService;
 import io.github.excalibase.postgres.service.DatabaseSchemaService;
+import io.github.excalibase.postgres.service.FunctionService;
 import io.github.excalibase.postgres.service.OpenApiService;
 import io.github.excalibase.postgres.service.QueryComplexityService;
 import io.github.excalibase.postgres.service.RestApiService;
 import io.github.excalibase.postgres.service.ValidationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +34,8 @@ import java.util.Map;
 @RequestMapping("/api/v1")
 public class RestApiController {
 
+    private static final Logger log = LoggerFactory.getLogger(RestApiController.class);
+
     // Security limits (available for future request body size validation)
     @SuppressWarnings("unused")
     private static final int MAX_REQUEST_BODY_SIZE = 1024 * 1024; // 1MB
@@ -39,18 +45,23 @@ public class RestApiController {
     private final DatabaseSchemaService schemaService;
     private final QueryComplexityService complexityService;
     private final ValidationService validationService;
+    private final AggregationService aggregationService;
+    private final FunctionService functionService;
 
     public RestApiController(RestApiService restApiService, OpenApiService openApiService,
                            DatabaseSchemaService schemaService, QueryComplexityService complexityService,
-                           ValidationService validationService) {
+                           ValidationService validationService, AggregationService aggregationService,
+                           FunctionService functionService) {
         this.restApiService = restApiService;
         this.openApiService = openApiService;
         this.schemaService = schemaService;
         this.complexityService = complexityService;
         this.validationService = validationService;
+        this.aggregationService = aggregationService;
+        this.functionService = functionService;
     }
 
-    // GET /api/v1/{table} - Get all records from a table with optional filtering, pagination, relationships
+    // GET /api/v1/{table} - Get all records from a table with optional filtering, pagination, relationships, inline aggregates
     @GetMapping("/{table}")
     public ResponseEntity<Map<String, Object>> getRecords(
             @PathVariable String table,
@@ -72,6 +83,20 @@ public class RestApiController {
 
             Map<String, Object> result;
 
+            // Check if select contains inline aggregates (PostgREST style)
+            // Examples: ?select=count() or ?select=amount.sum(),count() or ?select=status,count()
+            if (select != null && containsAggregateFunction(select)) {
+                // Route to inline aggregates
+                List<Map<String, Object>> aggregateResults = aggregationService.getInlineAggregates(
+                    table, select, allParams, null
+                );
+
+                // Wrap in standard response format
+                result = new HashMap<>();
+                result.put("data", aggregateResults);
+                return ResponseEntity.ok(result);
+            }
+
             // Check if using cursor-based pagination
             if (first != null || after != null || last != null || before != null) {
                 result = restApiService.getRecordsWithCursor(table, allParams, first, after, last, before, orderBy, orderDirection, select, expand);
@@ -86,6 +111,23 @@ public class RestApiController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "Internal server error: " + e.getMessage()));
         }
+    }
+
+    /**
+     * Check if select parameter contains aggregate functions
+     * Examples: count(), amount.sum(), total.avg()
+     */
+    private boolean containsAggregateFunction(String select) {
+        if (select == null || select.trim().isEmpty()) {
+            return false;
+        }
+
+        // Check for aggregate function patterns: function() or column.function()
+        return select.contains("count()") ||
+               select.contains(".sum()") ||
+               select.contains(".avg()") ||
+               select.contains(".min()") ||
+               select.contains(".max()");
     }
 
     // GET /api/v1/{table}/{id} - Get a specific record by primary key with relationships
@@ -710,6 +752,186 @@ public class RestApiController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "Failed to invalidate schema cache: " + e.getMessage()));
+        }
+    }
+
+    // ==================== AGGREGATION ENDPOINTS ====================
+
+    /**
+     * GET /api/v1/{table}/aggregate - Get aggregates for a table (GraphQL style)
+     *
+     * Supports: count, sum, avg, min, max with filters
+     * Returns structured nested format.
+     *
+     * Examples:
+     * - GET /orders/aggregate?status=eq.completed
+     * - GET /orders/aggregate?status=eq.completed&functions=count,sum&columns=amount,tax
+     *
+     * Response format:
+     * {
+     *   "count": 150,
+     *   "sum": {"amount": 45000.50, "tax": 6750.08},
+     *   "avg": {"amount": 300.00},
+     *   "min": {"amount": 10.00},
+     *   "max": {"amount": 5000.00}
+     * }
+     */
+    @GetMapping("/{table}/aggregate")
+    public ResponseEntity<Map<String, Object>> getAggregates(
+            @PathVariable String table,
+            @RequestParam MultiValueMap<String, String> allParams) {
+        try {
+            // Extract aggregate-specific parameters
+            String functionsParam = allParams.getFirst("functions");
+            String columnsParam = allParams.getFirst("columns");
+
+            List<String> functions = functionsParam != null ?
+                List.of(functionsParam.split(",")) : null;
+            List<String> columns = columnsParam != null ?
+                List.of(columnsParam.split(",")) : null;
+
+            Map<String, Object> result = aggregationService.getAggregates(
+                table, allParams, functions, columns
+            );
+
+            return ResponseEntity.ok(result);
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to compute aggregates: " + e.getMessage()));
+        }
+    }
+
+    // ==================== RPC ENDPOINTS ====================
+
+    /**
+     * POST /api/v1/rpc/{function} - Call a PostgreSQL function (PostgREST style)
+     *
+     * Execute any database function with JSON parameters.
+     *
+     * Examples:
+     * - POST /rpc/calculate_tax {"amount": 100, "rate": 0.15}
+     * - POST /rpc/get_user_stats {"user_id": 123}
+     *
+     * Response:
+     * - Scalar functions: {"result": value}
+     * - Table-returning: [{"col1": val1}, {"col2": val2}]
+     */
+    @PostMapping("/rpc/{function}")
+    public ResponseEntity<Object> callFunctionPost(
+            @PathVariable String function,
+            @RequestBody(required = false) Map<String, Object> parameters) {
+        log.info("RPC endpoint called: function={}, parameters={}", function, parameters);
+        try {
+            // Get schema from configuration (could be made configurable)
+            String schema = "public"; // TODO: get from config
+
+            Object result = functionService.executeRpc(function, parameters, schema);
+
+            // Wrap scalar results in a "result" field
+            if (result instanceof List) {
+                return ResponseEntity.ok(result);
+            } else {
+                return ResponseEntity.ok(Map.of("result", result != null ? result : "null"));
+            }
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to execute function: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * GET /api/v1/rpc/{function} - Call a read-only PostgreSQL function
+     *
+     * For read-only functions, supports GET with query parameters.
+     *
+     * Examples:
+     * - GET /rpc/get_user_stats?user_id=123
+     * - GET /rpc/calculate_tax?amount=100&rate=0.15
+     */
+    @GetMapping("/rpc/{function}")
+    public ResponseEntity<Object> callFunctionGet(
+            @PathVariable String function,
+            @RequestParam MultiValueMap<String, String> allParams) {
+        try {
+            // Convert query parameters to Map
+            Map<String, Object> parameters = new HashMap<>();
+            allParams.forEach((key, values) -> {
+                if (values != null && !values.isEmpty()) {
+                    parameters.put(key, values.get(0));
+                }
+            });
+
+            String schema = "public"; // TODO: get from config
+
+            Object result = functionService.executeRpc(function, parameters, schema);
+
+            // Wrap scalar results
+            if (result instanceof List) {
+                return ResponseEntity.ok(result);
+            } else {
+                return ResponseEntity.ok(Map.of("result", result != null ? result : "null"));
+            }
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to execute function: " + e.getMessage()));
+        }
+    }
+
+    // ==================== COMPUTED FIELDS ENDPOINTS ====================
+
+    /**
+     * GET /api/v1/{table}/functions - List computed fields for a table
+     *
+     * Returns all auto-discovered computed field functions for the table.
+     *
+     * Response: [
+     *   {"functionName": "customer_full_name", "fieldName": "full_name", "returnType": "text"},
+     *   {"functionName": "customer_age", "fieldName": "age", "returnType": "integer"}
+     * ]
+     */
+    @GetMapping("/{table}/functions")
+    public ResponseEntity<Object> getComputedFields(@PathVariable String table) {
+        try {
+            String schema = "public"; // TODO: get from config
+
+            var functions = functionService.getComputedFields(table, schema);
+
+            return ResponseEntity.ok(functions);
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to get computed fields: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/v1/admin/cache/functions/invalidate - Invalidate function metadata cache
+     *
+     * Clears cached function discovery results. Use when functions are added/removed.
+     */
+    @PostMapping("/admin/cache/functions/invalidate")
+    public ResponseEntity<Map<String, Object>> invalidateFunctionCache() {
+        try {
+            functionService.invalidateMetadataCache();
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Function cache invalidated successfully"
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(Map.of("error", "Failed to invalidate function cache: " + e.getMessage()));
         }
     }
 }

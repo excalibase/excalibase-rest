@@ -1,0 +1,139 @@
+site_name: Excalibase REST
+site_description: Automatic REST API generation from your database schemas
+site_author: Excalibase Team
+site_url: https://excalibase.github.io/excalibase-rest/
+
+repo_name: excalibase/excalibase-rest
+repo_url: https://github.com/excalibase/excalibase-rest
+
+copyright: Copyright &copy; 2024-2026 Excalibase Team
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.top
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - search.suggest
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/api
+
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/excalibase/excalibase-rest
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/excalibase/excalibase-rest
+  analytics:
+    provider: google
+    property: !ENV GOOGLE_ANALYTICS_KEY
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: excalibase
+      repo: excalibase-rest
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/extra.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Quick Start:
+    - Getting Started: quickstart/index.md
+    - Installation: quickstart/installation.md
+    - Configuration: quickstart/configuration.md
+  - API Reference:
+    - Overview: api/index.md
+    - CRUD Operations: api/crud.md
+    - Filtering: api/filtering.md
+    - Aggregations: api/aggregations.md
+    - Relationships: api/relationships.md
+    - Pagination: api/pagination.md
+  - Features:
+    - Database Type Support: features/postgresql-types.md
+    - Inline Aggregates: features/inline-aggregates.md
+    - Computed Fields: features/computed-fields.md
+    - RPC Functions: features/rpc-functions.md
+    - Composite Keys: features/composite-keys.md
+    - Query Complexity: features/query-complexity.md
+  - Guides:
+    - Performance Optimization: guides/performance.md
+    - Security Best Practices: guides/security.md
+    - Deployment: guides/deployment.md
+    - Testing: guides/testing.md
+  - Contributing: CONTRIBUTING.md
