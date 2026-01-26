@@ -140,6 +140,11 @@ public class RestApiConfig {
         private int maxRequestBodySize = 1048576; // 1MB
         private int maxQueryComplexity = 100;
 
+        // RLS (Row Level Security) configuration
+        private boolean userContextEnabled = false;
+        private String userIdExtractorType = "header";
+        private String userIdHeader = "X-User-Id";
+
         public boolean isEnableSqlInjectionProtection() {
             return enableSqlInjectionProtection;
         }
@@ -178,6 +183,32 @@ public class RestApiConfig {
 
         public void setMaxQueryComplexity(int maxQueryComplexity) {
             this.maxQueryComplexity = maxQueryComplexity;
+        }
+
+        // RLS configuration getters and setters
+
+        public boolean isUserContextEnabled() {
+            return userContextEnabled;
+        }
+
+        public void setUserContextEnabled(boolean userContextEnabled) {
+            this.userContextEnabled = userContextEnabled;
+        }
+
+        public String getUserIdExtractorType() {
+            return userIdExtractorType;
+        }
+
+        public void setUserIdExtractorType(String userIdExtractorType) {
+            this.userIdExtractorType = userIdExtractorType;
+        }
+
+        public String getUserIdHeader() {
+            return userIdHeader;
+        }
+
+        public void setUserIdHeader(String userIdHeader) {
+            this.userIdHeader = userIdHeader;
         }
     }
 }

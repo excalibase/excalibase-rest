@@ -67,7 +67,7 @@ app:
   schema-cache-ttl-seconds: 300 # 5 minutes
   permission-cache-ttl-seconds: 300 # 5 minutes - caches database permission checks
 
-  # PostgREST-style query protection
+  # Query protection
   db-statement-timeout-ms: 30000 # 30 seconds - PostgreSQL query execution timeout
   db-max-rows: 1000 # Maximum rows that can be requested per query
   
@@ -95,6 +95,11 @@ app:
     enable-column-name-validation: true
     max-request-body-size: 1048576 # 1MB
     max-query-complexity: 100
+
+    # Row Level Security (RLS) configuration
+    user-context-enabled: true      # Enable RLS support
+    user-id-extractor-type: header  # Extractor type: "header", "jwt", "oauth2", etc.
+    user-id-header: X-User-Id       # Header name for user ID when using header extractor
   
   # Query complexity limits
   query:
@@ -106,15 +111,15 @@ app:
   # Aggregation configuration
   aggregates:
     enabled: true
-    inline-enabled: true               # Enable PostgREST-style ?select=col.sum()
+    inline-enabled: true               # Enable inline aggregation: ?select=col.sum()
     dedicated-endpoint: true            # Enable /aggregate endpoint
     max-aggregates-per-query: 10
     default-functions: count,sum,avg,min,max
 
-  # Computed fields configuration (PostgREST style)
+  # Computed fields configuration
   computed-fields:
     enabled: true
-    auto-include: true                  # Auto-embed in responses (PostgREST style)
+    auto-include: true                  # Auto-embed in responses
     cache-ttl-seconds: 300             # Cache computed field results
     max-per-query: 20                  # Max computed fields per request
     discovery-cache-ttl-seconds: 3600  # Cache function discovery results
