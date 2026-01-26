@@ -28,14 +28,20 @@ services:
     environment:
       # Database connection
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/excalibase_rest
-      SPRING_DATASOURCE_USERNAME: testuser
-      SPRING_DATASOURCE_PASSWORD: testpass
+      SPRING_DATASOURCE_USERNAME: appuser
+      SPRING_DATASOURCE_PASSWORD: apppass
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
       # Application settings
       SERVER_PORT: 20000
       APP_ALLOWED_SCHEMA: public
       APP_DATABASE_TYPE: postgres
-      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE: INFO
+      # Enable RLS (Row Level Security)
+      APP_SECURITY_USER_CONTEXT_ENABLED: true
+      APP_SECURITY_USER_ID_EXTRACTOR_TYPE: header
+      APP_SECURITY_USER_ID_HEADER: X-User-Id
+      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE: DEBUG
+      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE_FILTER: DEBUG
+      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE_POSTGRES_SERVICE_USERCONTEXTSERVICE: DEBUG
     ports:
       - "20000:20000"
     depends_on:
