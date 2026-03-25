@@ -127,3 +127,4 @@ node_modules/
 # MkDocs build output
 site/
 
+/benchmark/
