@@ -69,32 +69,118 @@ public class FilterService {
     
     /**
      * Parse OR condition: or=(age.gte.18,student.is.true)
+     * Also supports nested logic: or=(age.eq.18,not.and(age.gte.30,age.lte.40))
      */
     private String parseOrCondition(String orValue, List<Object> params, Set<String> validColumns, TableInfo tableInfo) {
-        // Remove parentheses if present
+        // Remove outer parentheses if present
         if (orValue.startsWith("(") && orValue.endsWith(")")) {
             orValue = orValue.substring(1, orValue.length() - 1);
         }
-        
-        String[] orConditions = orValue.split(",");
+
+        List<String> tokens = splitLogicTokens(orValue);
         List<String> parsedConditions = new ArrayList<>();
-        
-        for (String condition : orConditions) {
-            condition = condition.trim();
-            // Split by first dot to get column and operator.value
-            int firstDot = condition.indexOf('.');
-            if (firstDot > 0) {
-                String column = condition.substring(0, firstDot);
-                String operatorValue = condition.substring(firstDot + 1);
-                
-                String parsedCondition = parseCondition(column, operatorValue, params, validColumns, tableInfo);
-                if (parsedCondition != null) {
-                    parsedConditions.add(parsedCondition);
-                }
+
+        for (String token : tokens) {
+            token = token.trim();
+            if (token.isEmpty()) continue;
+
+            String parsedCondition = parseLogicToken(token, params, validColumns, tableInfo);
+            if (parsedCondition != null) {
+                parsedConditions.add(parsedCondition);
             }
         }
-        
+
         return parsedConditions.isEmpty() ? null : String.join(" OR ", parsedConditions);
+    }
+
+    /**
+     * Parse a single logic token inside an or/and group.
+     * Handles:
+     * - col.op.value              → regular condition
+     * - not.and(...)              → NOT (AND group)
+     * - not.or(...)               → NOT (OR group)
+     * - and(...)                  → AND group
+     * - or(...)                   → nested OR group
+     */
+    private String parseLogicToken(String token, List<Object> params, Set<String> validColumns, TableInfo tableInfo) {
+        // not.and(...) or not.or(...)
+        if (token.startsWith("not.and(") && token.endsWith(")")) {
+            String inner = token.substring("not.and(".length(), token.length() - 1);
+            String andCondition = parseAndCondition(inner, params, validColumns, tableInfo);
+            return andCondition == null ? null : "NOT (" + andCondition + ")";
+        }
+        if (token.startsWith("not.or(") && token.endsWith(")")) {
+            String inner = token.substring("not.or(".length(), token.length() - 1);
+            String orCondition = parseOrCondition(inner, params, validColumns, tableInfo);
+            return orCondition == null ? null : "NOT (" + orCondition + ")";
+        }
+        // and(...) group
+        if (token.startsWith("and(") && token.endsWith(")")) {
+            String inner = token.substring("and(".length(), token.length() - 1);
+            return parseAndCondition(inner, params, validColumns, tableInfo);
+        }
+        // or(...) nested group
+        if (token.startsWith("or(") && token.endsWith(")")) {
+            String inner = token.substring("or(".length(), token.length() - 1);
+            String orCond = parseOrCondition(inner, params, validColumns, tableInfo);
+            return orCond == null ? null : "(" + orCond + ")";
+        }
+
+        // Regular: col.op.value
+        int firstDot = token.indexOf('.');
+        if (firstDot > 0) {
+            String column = token.substring(0, firstDot);
+            String operatorValue = token.substring(firstDot + 1);
+            return parseCondition(column, operatorValue, params, validColumns, tableInfo);
+        }
+        return null;
+    }
+
+    /**
+     * Parse AND condition group: col1.op.val1,col2.op.val2
+     */
+    private String parseAndCondition(String andValue, List<Object> params, Set<String> validColumns, TableInfo tableInfo) {
+        List<String> tokens = splitLogicTokens(andValue);
+        List<String> parsedConditions = new ArrayList<>();
+
+        for (String token : tokens) {
+            token = token.trim();
+            if (token.isEmpty()) continue;
+            String parsedCondition = parseLogicToken(token, params, validColumns, tableInfo);
+            if (parsedCondition != null) {
+                parsedConditions.add(parsedCondition);
+            }
+        }
+
+        return parsedConditions.isEmpty() ? null : String.join(" AND ", parsedConditions);
+    }
+
+    /**
+     * Split comma-separated tokens while respecting nested parentheses.
+     */
+    private List<String> splitLogicTokens(String input) {
+        List<String> tokens = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int depth = 0;
+
+        for (char c : input.toCharArray()) {
+            if (c == '(') {
+                depth++;
+                current.append(c);
+            } else if (c == ')') {
+                depth--;
+                current.append(c);
+            } else if (c == ',' && depth == 0) {
+                tokens.add(current.toString());
+                current = new StringBuilder();
+            } else {
+                current.append(c);
+            }
+        }
+        if (current.length() > 0) {
+            tokens.add(current.toString());
+        }
+        return tokens;
     }
     
     /**
@@ -128,6 +214,27 @@ public class FilterService {
      */
     private String buildConditionForOperator(String column, String operator, String operatorValue, List<Object> params, TableInfo tableInfo) {
         switch (operator.toLowerCase()) {
+            // ── Excalibase `not` prefix ──────────────────────────────────────────────
+            // e.g. col=not.eq.5, col=not.like.foo, col=not.is.null, col=not.in.(1,2,3)
+            case "not": {
+                int dot = operatorValue.indexOf('.');
+                if (dot > 0) {
+                    String innerOp = operatorValue.substring(0, dot);
+                    String innerVal = operatorValue.substring(dot + 1);
+                    // Produce cleaner SQL for common negations
+                    if ("is".equalsIgnoreCase(innerOp) && "null".equalsIgnoreCase(innerVal)) {
+                        return column + " IS NOT NULL";
+                    }
+                    if ("in".equalsIgnoreCase(innerOp)) {
+                        return buildNotInCondition(column, innerVal, params, tableInfo);
+                    }
+                    String innerCond = buildConditionForOperator(column, innerOp, innerVal, params, tableInfo);
+                    return "NOT (" + innerCond + ")";
+                }
+                // not without a sub-operator — treat as IS NOT NULL
+                return column + " IS NOT NULL";
+            }
+
             case "eq":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
                 return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
@@ -168,9 +275,23 @@ public class FilterService {
                 
             case "is":
                 return buildIsCondition(column, operatorValue, params, tableInfo);
-                
+
             case "isnotnull":
                 return column + " IS NOT NULL";
+
+            // ── Excalibase: IS DISTINCT FROM ─────────────────────────────────────────
+            case "isdistinct":
+                params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
+                return column + " IS DISTINCT FROM " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+
+            // ── Excalibase: POSIX regex ────────────────────────────────────────────
+            case "match":
+                params.add(operatorValue);
+                return column + " ~ ?";
+
+            case "imatch":
+                params.add(operatorValue);
+                return column + " ~* ?";
                 
             case "startswith":
                 params.add(operatorValue + "%");
@@ -235,19 +356,68 @@ public class FilterService {
                 params.add(Integer.parseInt(operatorValue));
                 return "array_length(" + column + ", 1) = ?";
                 
-            // Full-text search operators
+            // ── Full-text search operators (Excalibase-compatible) ─────────────────
+            // fts  → to_tsquery         (user provides tsquery syntax: 'hello & world')
             case "fts":
                 params.add(operatorValue);
-                return "to_tsvector('english', " + column + ") @@ plainto_tsquery('english', ?)";
-                
+                return "to_tsvector('english', " + column + ") @@ to_tsquery('english', ?)";
+
+            // plfts → plainto_tsquery   (plain text: 'hello world' → 'hello' & 'world')
             case "plfts":
                 params.add(operatorValue);
+                return "to_tsvector('english', " + column + ") @@ plainto_tsquery('english', ?)";
+
+            // phfts → phraseto_tsquery  (phrase search: 'hello world' → 'hello' <-> 'world')
+            case "phfts":
+                params.add(operatorValue);
                 return "to_tsvector('english', " + column + ") @@ phraseto_tsquery('english', ?)";
-                
+
+            // wfts  → websearch_to_tsquery (web search syntax: "hello world" -bad)
             case "wfts":
                 params.add(operatorValue);
                 return "to_tsvector('english', " + column + ") @@ websearch_to_tsquery('english', ?)";
-                
+
+            // ── Range / geometric operators (Excalibase-compatible) ────────────────
+            // cs  → @>  (contains)
+            case "cs":
+                params.add(operatorValue);
+                return column + " @> ?";
+
+            // cd  → <@  (contained in)
+            case "cd":
+                params.add(operatorValue);
+                return column + " <@ ?";
+
+            // ov  → &&  (overlaps)
+            case "ov":
+                params.add(operatorValue);
+                return column + " && ?";
+
+            // sl  → <<  (strictly left of)
+            case "sl":
+                params.add(operatorValue);
+                return column + " << ?";
+
+            // sr  → >>  (strictly right of)
+            case "sr":
+                params.add(operatorValue);
+                return column + " >> ?";
+
+            // nxl → &<  (does not extend to the left of)
+            case "nxl":
+                params.add(operatorValue);
+                return column + " &< ?";
+
+            // nxr → &>  (does not extend to the right of)
+            case "nxr":
+                params.add(operatorValue);
+                return column + " &> ?";
+
+            // adj → -|- (is adjacent to)
+            case "adj":
+                params.add(operatorValue);
+                return column + " -|- ?";
+
             default:
                 // Unknown operator, treat as equality
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
@@ -304,18 +474,18 @@ public class FilterService {
     }
 
     /**
-     * Build IS condition (null, true, false)
+     * Build IS condition — Excalibase-compatible: null, true, false, unknown.
      */
     private String buildIsCondition(String column, String operatorValue, List<Object> params, TableInfo tableInfo) {
         switch (operatorValue.toLowerCase()) {
             case "null":
                 return column + " IS NULL";
             case "true":
-                params.add(true);
-                return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+                return column + " IS TRUE";
             case "false":
-                params.add(false);
-                return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+                return column + " IS FALSE";
+            case "unknown":
+                return column + " IS UNKNOWN";
             default:
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
                 return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);

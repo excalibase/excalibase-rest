@@ -518,6 +518,72 @@ class DatabaseSchemaServiceTest {
         return rowMapper.mapRow(mockResultSet, 0);
     }
 
+    // ─── Phase 7B: Materialized view support ──────────────────────────────────
+
+    @Test
+    void shouldIncludeMatViewsInTableSchema() {
+        // Given: DB returns both regular table and a materialized view
+        schemaService.clearCache();
+        // Regular table query
+        when(jdbcTemplate.queryForList(
+            argThat(sql -> sql != null && !sql.contains("pg_matviews")),
+            eq(String.class), eq("test_schema")))
+            .thenReturn(List.of("users"));
+        // Materialized view query
+        when(jdbcTemplate.queryForList(
+            argThat(sql -> sql != null && sql.contains("pg_matviews")),
+            eq(String.class), eq("test_schema")))
+            .thenReturn(List.of("user_stats_mat"));
+
+        // Mock column query for users
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class),
+            eq("test_schema"), eq("users"), eq("test_schema"), eq("users")))
+            .thenReturn(List.of(new ColumnInfo("id", "integer", true, false)));
+        // Mock column query for user_stats_mat
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class),
+            eq("test_schema"), eq("user_stats_mat"), eq("test_schema"), eq("user_stats_mat")))
+            .thenReturn(List.of(new ColumnInfo("user_count", "bigint", false, true)));
+        // FK queries
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class),
+            eq("test_schema"), eq("users")))
+            .thenReturn(List.of());
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class),
+            eq("test_schema"), eq("user_stats_mat")))
+            .thenReturn(List.of());
+        // Row count
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq("test_schema"), eq("users")))
+            .thenReturn(0);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq("test_schema"), eq("user_stats_mat")))
+            .thenReturn(0);
+
+        // When: getting table schema
+        Map<String, TableInfo> result = schemaService.getTableSchema();
+
+        // Then: both tables and materialized views should appear
+        assertTrue(result.containsKey("users"), "Regular table should be present");
+        assertTrue(result.containsKey("user_stats_mat"), "Materialized view should be present");
+    }
+
+    // ─── Phase 7A: Domain type resolution ─────────────────────────────────────
+
+    @Test
+    void shouldResolveDomainTypeToBaseType() {
+        // Given: getDomainTypeToBaseTypeMap returns a mapping
+        Map<String, String> domainMap = Map.of("email_address", "text", "positive_int", "integer");
+
+        // When: resolving known domain types
+        String resolvedEmail = schemaService.resolveDomainType("email_address", domainMap);
+        String resolvedInt   = schemaService.resolveDomainType("positive_int", domainMap);
+        String resolvedPlain = schemaService.resolveDomainType("varchar", domainMap);
+        String resolvedNull  = schemaService.resolveDomainType(null, domainMap);
+
+        // Then: domain types should map to base types; non-domain types unchanged
+        assertEquals("text",    resolvedEmail);
+        assertEquals("integer", resolvedInt);
+        assertEquals("varchar", resolvedPlain); // not a domain type
+        assertNull(resolvedNull);
+    }
+
     private void setPrivateField(Object target, String fieldName, Object value) throws Exception {
         Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);

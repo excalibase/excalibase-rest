@@ -119,26 +119,78 @@ public class SelectParserService {
     }
     
     /**
-     * Parse a single select token (could be simple field or embedded field)
+     * Parse a single select token (could be simple field, embedded field, alias, cast, or JSON path).
+     *
+     * Supported syntax:
+     * - "name"                → simple field
+     * - "alias:name"          → alias (response key = alias, SQL column = name)
+     * - "age::text"           → type cast
+     * - "alias:age::text"     → alias + cast
+     * - "data->>key"          → JSON path (used as-is in SQL)
+     * - "city:address->>city" → alias + JSON path
+     * - "actors(name,age)"    → embedded resource (no alias/cast on these)
      */
     private SelectField parseSelectToken(String token) {
         token = token.trim();
-        
-        // Check if token contains parentheses (embedded field)
+
+        // Check if token contains parentheses (embedded field) — handle before alias/cast
         int openParen = token.indexOf('(');
         if (openParen > 0 && token.endsWith(")")) {
-            // Extract field name and content within parentheses
-            String fieldName = token.substring(0, openParen);
+            String rawFieldName = token.substring(0, openParen);
+            // Strip !inner hint if present
+            boolean inner = rawFieldName.endsWith("!inner");
+            String fieldName = inner ? rawFieldName.substring(0, rawFieldName.length() - 6) : rawFieldName;
+            // Embedded resource names must be valid identifiers (no dots, no special chars)
+            if (!fieldName.matches("[a-zA-Z_][a-zA-Z0-9_]*")) {
+                throw new IllegalArgumentException("Invalid select field: " + token);
+            }
             String subFieldsStr = token.substring(openParen + 1, token.length() - 1);
-            
             List<SelectField> subFields = parseSelect(subFieldsStr);
-            return new SelectField(fieldName, subFields);
-        } else {
-            // Simple field
-            return new SelectField(token);
+            return new SelectField(fieldName, subFields, inner);
         }
+
+        // Extract alias prefix: "alias:rest"
+        // Alias uses a SINGLE colon; type casts use "::" — must not confuse them.
+        // Strategy: find the first ":" that is NOT part of "::"
+        String alias = null;
+        String rest = token;
+        int colonIdx = indexOfSingleColon(token);
+        int firstArrow = token.indexOf("->"); // JSON path markers
+        if (colonIdx > 0 && (firstArrow < 0 || colonIdx < firstArrow)) {
+            alias = token.substring(0, colonIdx);
+            rest = token.substring(colonIdx + 1);
+        }
+
+        // Extract type cast suffix: "col::type" (only when no JSON path follows)
+        String cast = null;
+        if (!rest.contains("->") && rest.contains("::")) {
+            int castIdx = rest.lastIndexOf("::");
+            cast = rest.substring(castIdx + 2);
+            rest = rest.substring(0, castIdx);
+        }
+
+        return new SelectField(rest, alias, cast);
     }
     
+    /**
+     * Find the index of the first single colon ":" that is NOT part of "::" (type cast).
+     * Returns -1 if no such colon exists.
+     */
+    private int indexOfSingleColon(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == ':') {
+                // Check that it is not followed by another ':' (double colon = cast)
+                boolean nextIsColon = i + 1 < s.length() && s.charAt(i + 1) == ':';
+                // And not preceded by another ':' (would be the second colon of '::')
+                boolean prevIsColon = i > 0 && s.charAt(i - 1) == ':';
+                if (!nextIsColon && !prevIsColon) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     /**
      * Check if select contains any embedded fields
      */

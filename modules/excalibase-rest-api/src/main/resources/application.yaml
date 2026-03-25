@@ -5,6 +5,9 @@ server:
 spring:
   application:
     name: excalibase-rest
+  threads:
+    virtual:
+      enabled: true  # Java 21 virtual threads for high-concurrency I/O
   datasource:
     url: jdbc:postgresql://localhost:5432/postgres
     username: postgres
@@ -35,14 +38,12 @@ spring:
     username: testuser
     password: testpass
     driver-class-name: org.postgresql.Driver
-  
-  # Connection pool configuration
-  hikari:
-    maximum-pool-size: 20
-    minimum-idle: 5
-    idle-timeout: 300000
-    connection-timeout: 20000
-    max-lifetime: 1200000
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
 
   # Jackson configuration for JSON processing
   jackson:
@@ -68,7 +69,6 @@ app:
   permission-cache-ttl-seconds: 300 # 5 minutes - caches database permission checks
 
   # Query protection
-  db-statement-timeout-ms: 30000 # 30 seconds - PostgreSQL query execution timeout
   db-max-rows: 1000 # Maximum rows that can be requested per query
   
   # CORS configuration
@@ -107,6 +107,13 @@ app:
     max-depth: 10
     max-breadth: 50
     complexity-analysis-enabled: true
+
+  # NATS CDC configuration (connect to excalibase-watcher stream)
+  nats:
+    enabled: false                 # Enable to receive CDC events from excalibase-watcher
+    url: nats://localhost:4222     # NATS server URL
+    stream-name: CDC               # JetStream stream name
+    subject-prefix: cdc            # Subject prefix used by excalibase-watcher
 
   # Aggregation configuration
   aggregates:

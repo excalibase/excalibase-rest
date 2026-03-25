@@ -131,9 +131,11 @@ nav:
     - RPC Functions: features/rpc-functions.md
     - Composite Keys: features/composite-keys.md
     - Query Complexity: features/query-complexity.md
+    - Real-time CDC: features/realtime-cdc.md
   - Guides:
     - Performance Optimization: guides/performance.md
     - Security Best Practices: guides/security.md
+    - Observability: guides/observability.md
     - Deployment: guides/deployment.md
     - Testing: guides/testing.md
   - Contributing: CONTRIBUTING.md

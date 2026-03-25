@@ -7,11 +7,18 @@ services:
       POSTGRES_USER: testuser
       POSTGRES_PASSWORD: testpass
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    # Enable logical replication for CDC (excalibase-watcher)
+    command: >
+      postgres
+      -c wal_level=logical
+      -c max_replication_slots=10
+      -c max_wal_senders=10
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/initdb.sql:/docker-entrypoint-initdb.d/01-initdb.sql:ro
+      - ./scripts/02-roles.sql:/docker-entrypoint-initdb.d/02-roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U testuser -d excalibase_rest"]
       interval: 10s
@@ -22,31 +29,93 @@ services:
       - excalibase-rest-network
     restart: unless-stopped
 
+  nats:
+    image: nats:2.10
+    container_name: excalibase-rest-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"   # NATS monitoring UI
+    healthcheck:
+      test: ["CMD", "/nats-server", "--help"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - excalibase-rest-network
+    restart: unless-stopped
+
+  excalibase-watcher:
+    image: excalibase/excalibase-watcher
+    container_name: excalibase-rest-watcher
+    environment:
+      # Connect as superuser — required for replication slot + WAL reading
+      APP_CDC_POSTGRES_URL: jdbc:postgresql://postgres:5432/excalibase_rest
+      APP_CDC_POSTGRES_USERNAME: testuser
+      APP_CDC_POSTGRES_PASSWORD: testpass
+      APP_CDC_POSTGRES_ENABLED: true
+      APP_CDC_SLOT_NAME: excalibase_rest_slot
+      APP_CDC_PUBLICATION_NAME: excalibase_rest_pub
+      APP_CDC_CREATE_SLOT_IF_NOT_EXISTS: true
+      APP_CDC_CREATE_PUBLICATION_IF_NOT_EXISTS: true
+      # NATS
+      APP_NATS_URL: nats://nats:4222
+      APP_NATS_STREAM_NAME: CDC
+      APP_NATS_SUBJECT_PREFIX: cdc
+      APP_NATS_ENABLED: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    networks:
+      - excalibase-rest-network
+    restart: unless-stopped
+
   app:
     image: excalibase/excalibase-rest
     container_name: excalibase-rest-api
     environment:
-      # Database connection
+      # Database connection (non-superuser for RLS enforcement)
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/excalibase_rest
       SPRING_DATASOURCE_USERNAME: appuser
       SPRING_DATASOURCE_PASSWORD: apppass
       SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 50
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 5
+
       # Application settings
       SERVER_PORT: 20000
       APP_ALLOWED_SCHEMA: public
       APP_DATABASE_TYPE: postgres
-      # Enable RLS (Row Level Security)
+
+      # RLS (Row Level Security)
       APP_SECURITY_USER_CONTEXT_ENABLED: true
       APP_SECURITY_USER_ID_EXTRACTOR_TYPE: header
       APP_SECURITY_USER_ID_HEADER: X-User-Id
-      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE: DEBUG
-      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE_FILTER: DEBUG
-      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE_POSTGRES_SERVICE_USERCONTEXTSERVICE: DEBUG
+
+      # CDC subscriptions (SSE + WebSocket)
+      APP_NATS_ENABLED: true
+      APP_NATS_URL: nats://nats:4222
+      APP_NATS_STREAM_NAME: CDC
+      APP_NATS_SUBJECT_PREFIX: cdc
+
+      # Observability — OTLP signals to collector
+      # Run with docker-compose.observability.yml to activate the full stack
+      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://otel-collector:4318/v1/traces
+      MANAGEMENT_OTLP_METRICS_EXPORT_URL: http://otel-collector:4318/v1/metrics
+      MANAGEMENT_OTLP_LOGGING_ENDPOINT: http://otel-collector:4318/v1/logs
+
+      LOGGING_LEVEL_IO_GITHUB_EXCALIBASE: INFO
     ports:
       - "20000:20000"
     depends_on:
       postgres:
         condition: service_healthy
+      nats:
+        condition: service_healthy
+      excalibase-watcher:
+        condition: service_started
     networks:
       - excalibase-rest-network
     restart: unless-stopped

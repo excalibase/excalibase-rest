@@ -67,18 +67,30 @@ make dev-teardown
 - **RestApiService**: Core business logic for CRUD operations and filtering
 - **DatabaseSchemaService**: Database metadata introspection and caching
 - **OpenApiService**: OpenAPI 3.0 specification generation
+- **NatsCDCService**: NATS JetStream CDC consumer; routes DML events to per-table Reactor Sinks
+- **PreferHeaderParser**: Parses `Prefer` header (count, return, resolution directives)
 
 #### Controller Layer
 - **RestApiController**: REST endpoints for table operations and documentation
+- **ChangeController**: SSE endpoint (`GET /{table}/changes`) for real-time CDC streaming
+
+#### WebSocket
+- **WebSocketChangeHandler**: WebSocket handler (`/ws/{table}/changes`) for CDC streaming
+- **WebSocketConfig**: Registers WebSocket handlers
 
 #### Configuration
-- **RestApiConfig**: Application configuration properties
+- **RestApiConfig**: Application configuration properties (includes `NatsConfig` inner class)
 - **WebConfig**: CORS and web-related configuration
+
+#### Security / Observability
+- **JwtUserIdExtractor**: Extracts user ID from JWT tokens for request context
+- **RestApiObservabilityFilter**: Adds trace/span context to HTTP responses
 
 #### Models
 - **TableInfo**: Database table metadata
-- **ColumnInfo**: Database column metadata  
+- **ColumnInfo**: Database column metadata
 - **ForeignKeyInfo**: Foreign key relationship metadata
+- **CDCEvent**: CDC event model (shared with watcher) — types: INSERT, UPDATE, DELETE, DDL, etc.
 
 ### Enhanced PostgreSQL Type Support
 
@@ -131,6 +143,11 @@ app:
   database-type: postgres   # Database type
   max-page-size: 1000      # Maximum pagination limit
   default-page-size: 100   # Default pagination size
+  nats:
+    enabled: false            # Enable CDC subscriptions
+    url: nats://localhost:4222
+    stream-name: CDC
+    subject-prefix: cdc
 ```
 
 ## API Design Principles
@@ -226,13 +243,26 @@ app:
 - `DatabaseSchemaService.java`: Schema introspection
 - `OpenApiService.java`: Documentation generation
 
+### CDC / Real-time
+- `NatsCDCService.java`: NATS JetStream consumer, per-table Reactor Sinks
+- `ChangeController.java`: SSE endpoint for CDC streaming
+- `WebSocketChangeHandler.java`: WebSocket handler for CDC streaming
+- `WebSocketConfig.java`: WebSocket handler registration
+- `CDCEvent.java`: Shared CDC event model (in excalibase-rest-starter)
+
 ### Configuration
-- `RestApiConfig.java`: Application configuration
+- `RestApiConfig.java`: Application configuration (includes NatsConfig)
 - `WebConfig.java`: CORS and web configuration
 - `application.yaml`: Default configuration
 
+### Infrastructure
+- `docker-compose.yml`: App + PostgreSQL + NATS + excalibase-watcher
+- `docker-compose.observability.yml`: OTel Collector + Grafana + Prometheus + Tempo + Loki
+- `scripts/02-roles.sql`: Database role setup for RLS
+
 ### Documentation
 - `README.md`: User documentation
+- `docs/`: MkDocs documentation site
 - `Makefile`: Development commands
 - `CLAUDE.md`: Developer guidance (this file)
 

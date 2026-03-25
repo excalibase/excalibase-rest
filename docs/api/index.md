@@ -26,6 +26,8 @@ Every table in your configured schema automatically gets these endpoints:
 | <span class="http-method put">PUT</span> | `/api/v1/{table}/{id}` | Update record (full replace) |
 | <span class="http-method patch">PATCH</span> | `/api/v1/{table}/{id}` | Update record (partial) |
 | <span class="http-method delete">DELETE</span> | `/api/v1/{table}/{id}` | Delete record |
+| <span class="http-method get">GET</span> | `/api/v1/{table}/changes` | SSE change stream |
+| | `ws://host/ws/{table}/changes` | WebSocket change stream |
 
 ### Example
 
@@ -489,6 +491,23 @@ Content-Type: application/json
 ```
 Accept: application/json
 Authorization: Bearer {token}  # If authentication is enabled
+Prefer: count=exact            # Include total count in pagination
+Prefer: return=representation  # Return created/updated object (default)
+Prefer: return=minimal         # Return minimal response
+```
+
+### Prefer Header
+
+The `Prefer` header controls optional response behaviors:
+
+```bash
+# Include total count in pagination
+curl -H "Prefer: count=exact" "http://localhost:20000/api/v1/users?limit=10"
+# Response: {"pagination": {"total": 42, "offset": 0, "limit": 10, "hasMore": true}, ...}
+
+# Without Prefer header, total is omitted for better performance
+curl "http://localhost:20000/api/v1/users?limit=10"
+# Response: {"pagination": {"offset": 0, "limit": 10, "hasMore": true}, ...}
 ```
 
 ## Rate Limiting
@@ -562,3 +581,4 @@ Explore specific API features:
 - [Aggregations](aggregations.md) - Statistical functions
 - [Relationships](relationships.md) - Foreign key expansion
 - [Pagination](pagination.md) - Pagination strategies
+- [Real-time CDC](../features/realtime-cdc.md) - SSE and WebSocket change streams

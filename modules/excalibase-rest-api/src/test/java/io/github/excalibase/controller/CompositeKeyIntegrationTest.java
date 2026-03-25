@@ -160,7 +160,8 @@ class CompositeKeyIntegrationTest {
     @Test
     @Order(5)
     void shouldHandleCompositeKeyInQueries() throws Exception {
-        mockMvc.perform(get("/api/v1/order_items"))
+        mockMvc.perform(get("/api/v1/order_items")
+                        .header("Prefer", "count=exact"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray())
                 .andExpect(jsonPath("$.data").value(hasSize(3)))

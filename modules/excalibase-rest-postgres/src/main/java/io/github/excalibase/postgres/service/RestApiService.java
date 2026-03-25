@@ -51,9 +51,6 @@ public class RestApiService {
     @Value("${app.database-type:postgres}")
     private String databaseType;
 
-    @Value("${app.db-statement-timeout-ms:30000}")
-    private int statementTimeoutMs;
-
     @Value("${app.db-max-rows:1000}")
     private int dbMaxRows;
     
@@ -82,14 +79,14 @@ public class RestApiService {
 
         // Initialize configuration with defaults for tests
         // These will be overridden by @Value when Spring creates the bean
-        this.statementTimeoutMs = 30000; // 30 seconds default
         this.dbMaxRows = 1000; // 1000 rows default
     }
 
 
     public Map<String, Object> getRecords(String tableName, MultiValueMap<String, String> allParams,
                                         int offset, int limit, String orderBy,
-                                        String orderDirection, String select, String expand) {
+                                        String orderDirection, String select, String expand,
+                                        boolean includeCount) {
         // Security validations
         validationService.validatePaginationParams(offset, limit);
         if (tableName == null || tableName.trim().isEmpty()) {
@@ -108,9 +105,6 @@ public class RestApiService {
         // Validate query complexity (if enabled)
         complexityService.validateQueryComplexity(tableName, allParams, limit, expand);
 
-        // Apply PostgreSQL statement timeout for query protection
-        applyStatementTimeout();
-
         // Filter out control parameters to get only filter parameters
         MultiValueMap<String, String> filters = new org.springframework.util.LinkedMultiValueMap<>();
         if (allParams != null) {
@@ -125,25 +119,32 @@ public class RestApiService {
         // Build query
         StringBuilder query = new StringBuilder();
         List<Object> params = new ArrayList<>();
-        
-        // SELECT clause
-        query.append(queryBuilderService.buildSelectClause(select, tableInfo));
+
+        // Parse select fields early — used for both SQL generation and embedded expansion
+        List<SelectField> selectFields = null;
+        if (select != null && !select.trim().isEmpty()) {
+            selectFields = selectParserService.parseSelect(select);
+            selectParserService.parseEmbeddedFilters(selectFields, allParams);
+            query.append(buildSelectSqlFromFields(selectFields, tableInfo));
+        } else {
+            query.append("SELECT *");
+        }
         query.append(" FROM ").append(tableName);
-        
+
         // WHERE clause
         if (!filters.isEmpty()) {
             query.append(" WHERE ");
             List<String> conditions = filterService.parseFilters(filters, params, tableInfo);
             query.append(String.join(" AND ", conditions));
         }
-        
+
         // ORDER BY clause
         if (orderBy != null && !orderBy.trim().isEmpty()) {
             validationService.validateOrderByColumn(orderBy, tableInfo);
             String direction = orderDirection.equalsIgnoreCase("desc") ? "DESC" : "ASC";
             query.append(" ORDER BY ").append(orderBy).append(" ").append(direction);
         }
-        
+
         // Support "order" parameter for ordering
         String order = allParams != null ? allParams.getFirst("order") : null;
         if (order != null && !order.trim().isEmpty() && (orderBy == null || orderBy.trim().isEmpty())) {
@@ -152,27 +153,22 @@ public class RestApiService {
                 query.append(" ORDER BY ").append(String.join(", ", orderClauses));
             }
         }
-        
+
         // LIMIT and OFFSET
         query.append(" LIMIT ").append(limit).append(" OFFSET ").append(offset);
-        
+
         // Execute query
         List<Map<String, Object>> records = jdbcTemplate.queryForList(query.toString(), params.toArray());
-        
+
         // Convert all PostgreSQL types using comprehensive converter (GraphQL parity)
         if (records != null) {
             records = PostgresTypeConverter.convertPostgresTypes(records, tableInfo);
         }
-        
+
         // Handle enhanced select with embedded fields or legacy expand parameter
-        if (select != null && !select.trim().isEmpty()) {
-            // Parse select parameter for relationship embedding
-            List<SelectField> selectFields = selectParserService.parseSelect(select);
-            selectParserService.parseEmbeddedFilters(selectFields, allParams);
-            
+        if (selectFields != null) {
             List<SelectField> embeddedFields = selectParserService.getEmbeddedFields(selectFields);
             if (!embeddedFields.isEmpty()) {
-                // Use enhanced relationship expansion
                 records = enhancedRelationshipService.expandRelationships(records, tableInfo, embeddedFields, allParams);
             }
         } else if (expand != null && !expand.trim().isEmpty()) {
@@ -180,26 +176,30 @@ public class RestApiService {
             records = expandRelationships(records, tableInfo, expand);
         }
         
-        // Get total count for pagination
-        String countQuery = "SELECT COUNT(*) FROM " + tableName;
-        List<Object> countParams = new ArrayList<>();
-        
-        if (!filters.isEmpty()) {
-            countQuery += " WHERE ";
-            List<String> conditions = filterService.parseFilters(filters, countParams, tableInfo);
-            countQuery += String.join(" AND ", conditions);
+        // COUNT(*) only when explicitly requested (Prefer: count=exact)
+        // Skipping it by default saves one DB round-trip per request
+        Long totalCount = null;
+        if (includeCount) {
+            String countQuery = "SELECT COUNT(*) FROM " + tableName;
+            List<Object> countParams = new ArrayList<>();
+            if (!filters.isEmpty()) {
+                countQuery += " WHERE ";
+                List<String> conditions = filterService.parseFilters(filters, countParams, tableInfo);
+                countQuery += String.join(" AND ", conditions);
+            }
+            totalCount = jdbcTemplate.queryForObject(countQuery, Long.class, countParams.toArray());
         }
-        
-        Long totalCount = jdbcTemplate.queryForObject(countQuery, Long.class, countParams.toArray());
-        
+
         Map<String, Object> result = new HashMap<>();
         result.put("data", records);
-        result.put("pagination", Map.of(
-            "offset", offset,
-            "limit", limit,
-            "total", totalCount != null ? totalCount : 0,
-            "hasMore", offset + limit < (totalCount != null ? totalCount : 0)
-        ));
+        Map<String, Object> pagination = new HashMap<>();
+        pagination.put("offset", offset);
+        pagination.put("limit", limit);
+        pagination.put("hasMore", records.size() == limit);
+        if (totalCount != null) {
+            pagination.put("total", totalCount);
+        }
+        result.put("pagination", pagination);
         
         // Clear batch cache to prevent memory issues
         batchLoader.clearCache();
@@ -223,8 +223,16 @@ public class RestApiService {
             throw new IllegalArgumentException("Table " + tableName + " has no primary key defined");
         }
 
-        // Build query
-        String selectClause = queryBuilderService.buildSelectClause(select, tableInfo).substring(7); // Remove "SELECT "
+        // Build query — use enhanced select clause builder
+        List<SelectField> selectFields = null;
+        String selectSql;
+        if (select != null && !select.trim().isEmpty()) {
+            selectFields = selectParserService.parseSelect(select);
+            selectSql = buildSelectSqlFromFields(selectFields, tableInfo);
+        } else {
+            selectSql = "SELECT *";
+        }
+        String selectClause = selectSql.substring(7); // Remove "SELECT "
 
         // Parse composite key values and build WHERE clause
         String[] keyValues = queryBuilderService.parseCompositeKey(id, primaryKeyColumns.size());
@@ -249,11 +257,8 @@ public class RestApiService {
         Map<String, Object> result = results.get(0);
         
         // Handle enhanced select with embedded fields or legacy expand parameter
-        if (select != null && !select.trim().isEmpty()) {
-            // Parse select parameter for relationship embedding
-            List<SelectField> selectFields = selectParserService.parseSelect(select);
+        if (selectFields != null) {
             // Note: For single record, we don't have allParams, so no embedded filters
-            
             List<SelectField> embeddedFields = selectParserService.getEmbeddedFields(selectFields);
             if (!embeddedFields.isEmpty()) {
                 // Use enhanced relationship expansion
@@ -324,11 +329,16 @@ public class RestApiService {
         // Build query
         StringBuilder query = new StringBuilder();
         List<Object> params = new ArrayList<>();
-        
-        // SELECT clause
-        query.append(queryBuilderService.buildSelectClause(select, tableInfo));
+
+        // SELECT clause — enhanced
+        if (select != null && !select.trim().isEmpty()) {
+            List<SelectField> cursorSelectFields = selectParserService.parseSelect(select);
+            query.append(buildSelectSqlFromFields(cursorSelectFields, tableInfo));
+        } else {
+            query.append("SELECT *");
+        }
         query.append(" FROM ").append(tableName);
-        
+
         // WHERE clause (including cursor conditions)
         List<String> conditions = new ArrayList<>();
         
@@ -703,20 +713,37 @@ public class RestApiService {
     }
 
     /**
-     * Apply PostgreSQL statement timeout for query protection.
-     * This protection mechanism limits query execution time
-     * to prevent long-running queries from consuming excessive database resources.
-     *
-     * The timeout is applied per transaction and will cause PostgreSQL to cancel
-     * queries that exceed the configured duration.
+    /**
+     * Build a SQL SELECT clause from parsed SelectField objects, applying extended
+     * alias, type cast, and JSON path syntax. Embedded (relationship) fields are skipped here
+     * since they are handled via JOIN/subquery expansion separately.
      */
-    private void applyStatementTimeout() {
-        try {
-            jdbcTemplate.execute("SET LOCAL statement_timeout = " + statementTimeoutMs);
-            log.debug("Applied statement timeout: {}ms", statementTimeoutMs);
-        } catch (Exception e) {
-            log.warn("Failed to set statement timeout: {}", e.getMessage());
-            // Don't fail the request if timeout setting fails
+    private String buildSelectSqlFromFields(List<SelectField> fields, TableInfo tableInfo) {
+        Set<String> validColumns = tableInfo.getColumns().stream()
+            .map(ColumnInfo::getName)
+            .collect(Collectors.toSet());
+
+        List<String> sqlExprs = new ArrayList<>();
+        for (SelectField field : fields) {
+            if (field.isEmbedded()) continue;
+            if (field.isWildcard()) {
+                sqlExprs.add("*");
+                continue;
+            }
+            // Validate the base column name (strip JSON path operator to get the column)
+            String baseName = field.getName().contains("->")
+                ? field.getName().substring(0, field.getName().indexOf("->"))
+                : field.getName();
+            if (!field.isJsonPath() && !validColumns.contains(baseName)) {
+                throw new IllegalArgumentException("Invalid column: " + baseName);
+            }
+            if (field.isJsonPath() && !validColumns.contains(baseName)) {
+                throw new IllegalArgumentException("Invalid column: " + baseName);
+            }
+            sqlExprs.add(field.toSqlExpression());
         }
+
+        if (sqlExprs.isEmpty()) return "SELECT *";
+        return "SELECT " + String.join(", ", sqlExprs);
     }
 }

@@ -33,14 +33,18 @@ Excalibase REST is a powerful Spring Boot application that **automatically gener
 - **💾 Schema Caching**: Performance optimization with configurable TTL-based caching
 - **🔄 CI/CD Pipeline**: GitHub Actions integration with automated testing
 
+- **📡 Real-time CDC Subscriptions**: Server-Sent Events (SSE) and WebSocket change streams via NATS JetStream
+- **🔍 Prefer Header**: `Prefer: count=exact` for optional total counts
+- **👤 JWT User ID Extraction**: Automatic user context from JWT tokens
+- **📊 Observability Stack**: OpenTelemetry traces/metrics, Grafana, Prometheus, Tempo, Loki
+- **⚡ Virtual Threads**: Java 21 virtual threads for high-concurrency workloads
+
 ### 🚧 Planned Features
 
 - [ ] **MySQL Support** - Complete MySQL database integration
 - [ ] **Oracle Support** - Add Oracle database compatibility
 - [ ] **SQL Server Support** - Microsoft SQL Server implementation
 - [ ] **Authentication/Authorization** - Role-based access control
-- [ ] **GraphQL Integration** - Optional GraphQL endpoint alongside REST
-- [ ] **Real-time Subscriptions** - WebSocket-based change notifications
 
 ## 📋 Quick Start
 
@@ -250,6 +254,52 @@ curl -X POST "http://localhost:20000/api/v1/users?prefer=resolution=merge-duplic
   -d '{"email": "john@example.com", "name": "John Doe"}'
 ```
 
+### Real-time CDC Subscriptions
+
+Excalibase REST supports real-time change data capture (CDC) via SSE and WebSocket. Changes made through the API **or directly in PostgreSQL** are streamed to subscribers.
+
+**Prerequisites**: Requires [excalibase-watcher](https://github.com/excalibase/excalibase-watcher) and NATS JetStream (included in `docker-compose.yml`).
+
+```bash
+# SSE — subscribe to changes on a table
+curl -N "http://localhost:20000/api/v1/customers/changes"
+
+# Events arrive as:
+# event:INSERT
+# data:{"id":"...","name":"John Doe","email":"john@example.com",...}
+#
+# event:UPDATE
+# data:{"new":{"id":"...","name":"Jane Doe",...}}
+#
+# event:DELETE
+# data:{"id":"..."}
+```
+
+```javascript
+// WebSocket — connect to ws://localhost:20000/ws/customers/changes
+const ws = new WebSocket("ws://localhost:20000/ws/customers/changes");
+ws.onmessage = (msg) => {
+  const event = JSON.parse(msg.data);
+  console.log(event.event, event.table, event.data);
+};
+```
+
+### Prefer Header
+
+Use the `Prefer` header for optional response behaviors:
+
+```bash
+# Include total count in pagination response
+curl -H "Prefer: count=exact" "http://localhost:20000/api/v1/users?limit=10"
+# Response includes: "pagination": {"total": 42, ...}
+
+# Return created/updated object (default behavior)
+curl -H "Prefer: return=representation" -X POST ...
+
+# Return minimal response
+curl -H "Prefer: return=minimal" -X POST ...
+```
+
 ## 🏗️ Database Schema Discovery
 
 Excalibase REST automatically discovers your database schema and creates REST endpoints:
@@ -328,9 +378,24 @@ spring:
       idle-timeout: 300000
 ```
 
+### CDC / NATS Configuration
+
+```yaml
+app:
+  nats:
+    enabled: false              # Enable CDC subscriptions
+    url: nats://localhost:4222  # NATS server URL
+    stream-name: CDC            # JetStream stream name
+    subject-prefix: cdc         # Subject prefix for CDC events
+```
+
 ### Environment Variables
 
 ```bash
+# CDC / NATS
+export APP_NATS_ENABLED=true
+export APP_NATS_URL=nats://localhost:4222
+
 # Database connection
 export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/mydb
 export SPRING_DATASOURCE_USERNAME=myuser
@@ -432,6 +497,25 @@ docker build -t excalibase/excalibase-rest .
 mvn clean package -DskipTests
 ```
 
+## 📡 Observability
+
+An optional observability stack is available via a compose override:
+
+```bash
+# Start app + observability (Grafana, Prometheus, Tempo, Loki)
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+```
+
+| Service    | URL                          | Purpose         |
+|------------|------------------------------|-----------------|
+| Grafana    | http://localhost:3030         | Dashboards      |
+| Prometheus | http://localhost:9090         | Metrics         |
+| Tempo      | http://localhost:3200         | Traces          |
+| Loki       | http://localhost:3100         | Logs            |
+| NATS       | http://localhost:8222         | NATS monitoring |
+
+Signal flow: `App --OTLP--> OTel Collector --> Tempo (traces) / Prometheus (metrics) / Loki (logs) --> Grafana`
+
 ## 📖 Documentation
 
 - **[API Reference](docs/api-reference.md)** - Complete REST API documentation
@@ -463,7 +547,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 ## 🔗 Related Projects
 
 - **[Excalibase GraphQL](https://github.com/excalibase/excalibase-graphql)** - GraphQL version of this project
-- **[Hasura](https://hasura.io/)** - GraphQL engine for databases
+- **[Excalibase Watcher](https://github.com/excalibase/excalibase-watcher)** - CDC streaming service
 
 ---
 

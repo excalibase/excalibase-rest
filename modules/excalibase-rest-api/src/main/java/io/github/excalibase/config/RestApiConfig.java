@@ -20,6 +20,9 @@ public class RestApiConfig {
     // Security configuration
     private SecurityConfig security = new SecurityConfig();
 
+    // NATS CDC configuration
+    private NatsConfig nats = new NatsConfig();
+
     public String getAllowedSchema() {
         return allowedSchema;
     }
@@ -74,6 +77,33 @@ public class RestApiConfig {
 
     public void setSecurity(SecurityConfig security) {
         this.security = security;
+    }
+
+    public NatsConfig getNats() {
+        return nats;
+    }
+
+    public void setNats(NatsConfig nats) {
+        this.nats = nats;
+    }
+
+    public static class NatsConfig {
+        private boolean enabled = false;
+        private String url = "nats://localhost:4222";
+        private String streamName = "CDC";
+        private String subjectPrefix = "cdc";
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+        public String getUrl() { return url; }
+        public void setUrl(String url) { this.url = url; }
+
+        public String getStreamName() { return streamName; }
+        public void setStreamName(String streamName) { this.streamName = streamName; }
+
+        public String getSubjectPrefix() { return subjectPrefix; }
+        public void setSubjectPrefix(String subjectPrefix) { this.subjectPrefix = subjectPrefix; }
     }
 
     public static class CorsConfig {

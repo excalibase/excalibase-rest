@@ -41,6 +41,16 @@ Excalibase REST is a Spring Boot application that automatically generates a comp
 <h3>🔗 Smart Relationships</h3>
 <p>Foreign keys automatically become REST expansions. Full composite key support with <code>?expand=orders(limit:5)</code>.</p>
 </div>
+
+<div class="feature-card">
+<h3>📡 Real-time CDC</h3>
+<p>SSE and WebSocket change streams powered by NATS JetStream. Capture changes from API <strong>and</strong> direct SQL.</p>
+</div>
+
+<div class="feature-card">
+<h3>📊 Observability</h3>
+<p>Built-in OpenTelemetry traces, Prometheus metrics, and Loki logs — all visualized in Grafana.</p>
+</div>
 </div>
 
 ## Quick Start
@@ -384,6 +394,10 @@ Database (PostgreSQL / MySQL / Oracle)
 - [x] Composite key support
 - [x] Query complexity analysis
 - [x] PostgreSQL support (primary)
+- [x] Real-time CDC subscriptions (SSE + WebSocket)
+- [x] Observability stack (OTel + Grafana + Prometheus + Tempo + Loki)
+- [x] Prefer header support
+- [x] Virtual threads (Java 21)
 - [ ] Comprehensive testing (in progress)
 - [ ] Performance optimization (ongoing)
 - [ ] Production hardening
@@ -394,8 +408,6 @@ Database (PostgreSQL / MySQL / Oracle)
 - [ ] SQL Server support
 - [ ] Authentication module (separate repo)
 - [ ] GraphQL endpoint (via excalibase-graphql)
-- [ ] Real-time subscriptions
-- [ ] Advanced monitoring & metrics
 
 ## Community
 

@@ -209,20 +209,20 @@ class EnhancedRelationshipServiceTest {
         when(jdbcTemplate.queryForList(
             argThat(sql -> sql.contains("SELECT name FROM authors") &&
                           sql.contains("WHERE id IN (?)") &&
-                          sql.contains("AND status = 'active'") &&
-                          sql.contains("AND age > '25'")),
+                          sql.contains("AND status = ?") &&
+                          sql.contains("AND age > ?")),
             any(Object[].class)
         )).thenReturn(relatedRecords);
 
         relationshipService.expandRelationships(records, tableInfo, embeddedFields, new LinkedMultiValueMap<>());
 
-        // Then: should apply filters in WHERE clause
+        // Then: should apply filters in WHERE clause (parameterized, not concatenated)
         verify(schemaService, times(1)).getTableSchema();
         verify(jdbcTemplate, times(1)).queryForList(
             argThat(sql -> sql.contains("SELECT name FROM authors") &&
                           sql.contains("WHERE id IN (?)") &&
-                          sql.contains("AND status = 'active'") &&
-                          sql.contains("AND age > '25'")),
+                          sql.contains("AND status = ?") &&
+                          sql.contains("AND age > ?")),
             any(Object[].class)
         );
     }
@@ -254,24 +254,24 @@ class EnhancedRelationshipServiceTest {
         // When: expanding with various operators
         when(schemaService.getTableSchema()).thenReturn(allTables);
         when(jdbcTemplate.queryForList(
-            argThat(sql -> sql.contains("age >= '30'") &&
-                          sql.contains("status != 'inactive'") &&
-                          sql.contains("bio LIKE '%writer%'") &&
-                          sql.contains("score < '100'") &&
-                          sql.contains("rating <= '5'")),
+            argThat(sql -> sql.contains("age >= ?") &&
+                          sql.contains("status != ?") &&
+                          sql.contains("bio LIKE ?") &&
+                          sql.contains("score < ?") &&
+                          sql.contains("rating <= ?")),
             any(Object[].class)
         )).thenReturn(relatedRecords);
 
         relationshipService.expandRelationships(records, tableInfo, embeddedFields, new LinkedMultiValueMap<>());
 
-        // Then: should handle all operators correctly
+        // Then: should handle all operators correctly with parameterized queries
         verify(schemaService, times(1)).getTableSchema();
         verify(jdbcTemplate, times(1)).queryForList(
-            argThat(sql -> sql.contains("age >= '30'") &&
-                          sql.contains("status != 'inactive'") &&
-                          sql.contains("bio LIKE '%writer%'") &&
-                          sql.contains("score < '100'") &&
-                          sql.contains("rating <= '5'")),
+            argThat(sql -> sql.contains("age >= ?") &&
+                          sql.contains("status != ?") &&
+                          sql.contains("bio LIKE ?") &&
+                          sql.contains("score < ?") &&
+                          sql.contains("rating <= ?")),
             any(Object[].class)
         );
     }
@@ -430,16 +430,16 @@ class EnhancedRelationshipServiceTest {
         // When: expanding with default equality filter
         when(schemaService.getTableSchema()).thenReturn(allTables);
         when(jdbcTemplate.queryForList(
-            argThat(sql -> sql.contains("status = 'active'")),
+            argThat(sql -> sql.contains("status = ?")),
             any(Object[].class)
         )).thenReturn(relatedRecords);
 
         relationshipService.expandRelationships(records, tableInfo, embeddedFields, new LinkedMultiValueMap<>());
 
-        // Then: should use equality operator
+        // Then: should use parameterized equality operator (not string concatenation)
         verify(schemaService, times(1)).getTableSchema();
         verify(jdbcTemplate, times(1)).queryForList(
-            argThat(sql -> sql.contains("status = 'active'")),
+            argThat(sql -> sql.contains("status = ?")),
             any(Object[].class)
         );
     }
@@ -477,6 +477,123 @@ class EnhancedRelationshipServiceTest {
             argThat(sql -> sql.contains("SELECT * FROM authors")),
             any(Object[].class)
         );
+    }
+
+    // ─── Phase 3: Many-to-Many and !inner ─────────────────────────────────────
+
+    @Test
+    void shouldExpandManyToManyViaJunctionTable() {
+        // films → film_actors → actors (M2M)
+        List<Map<String, Object>> records = Arrays.asList(
+            createMap("id", 1, "title", "Inception"),
+            createMap("id", 2, "title", "The Matrix")
+        );
+
+        TableInfo filmsTable = createFilmsTableInfo();
+        TableInfo actorsTable = createActorsTableInfo();
+        TableInfo filmActorsTable = createFilmActorsTableInfo();
+
+        List<SelectField> embeddedFields = Arrays.asList(
+            new SelectField("actors", Arrays.asList(new SelectField("name")))
+        );
+
+        Map<String, TableInfo> allTables = new HashMap<>();
+        allTables.put("films", filmsTable);
+        allTables.put("actors", actorsTable);
+        allTables.put("film_actors", filmActorsTable);
+
+        // The junction query returns actor rows with the film_id included
+        List<Map<String, Object>> junctionResult = Arrays.asList(
+            createMap("film_id", 1, "id", 10, "name", "Leonardo DiCaprio"),
+            createMap("film_id", 2, "id", 11, "name", "Keanu Reeves")
+        );
+
+        when(schemaService.getTableSchema()).thenReturn(allTables);
+        when(jdbcTemplate.queryForList(
+            argThat(sql -> sql != null && sql.contains("film_actors") && sql.contains("actors")),
+            any(Object[].class)
+        )).thenReturn(junctionResult);
+
+        relationshipService.expandRelationships(records, filmsTable, embeddedFields, new LinkedMultiValueMap<>());
+
+        verify(jdbcTemplate, times(1)).queryForList(
+            argThat(sql -> sql != null && sql.contains("film_actors") && sql.contains("actors")),
+            any(Object[].class)
+        );
+
+        List<Map<String, Object>> actors0 = getNestedList(records.get(0), "actors");
+        assertNotNull(actors0);
+        assertEquals(1, actors0.size());
+        assertEquals("Leonardo DiCaprio", actors0.get(0).get("name"));
+
+        List<Map<String, Object>> actors1 = getNestedList(records.get(1), "actors");
+        assertNotNull(actors1);
+        assertEquals(1, actors1.size());
+        assertEquals("Keanu Reeves", actors1.get(0).get("name"));
+    }
+
+    @Test
+    void shouldFilterParentRowsWhenInnerHintUsed() {
+        // Author 101 has posts; author 102 does NOT — with !inner, author 102 is removed
+        List<Map<String, Object>> records = new ArrayList<>(Arrays.asList(
+            createMap("id", 101, "name", "John Doe"),
+            createMap("id", 102, "name", "Jane Smith")
+        ));
+
+        TableInfo tableInfo = createAuthorsTableInfo();
+        SelectField embeddedField = new SelectField("posts",
+            Arrays.asList(new SelectField("title")), true /* inner */);
+        List<SelectField> embeddedFields = Arrays.asList(embeddedField);
+
+        Map<String, TableInfo> allTables = new HashMap<>();
+        allTables.put("authors", tableInfo);
+        allTables.put("posts", createPostsTableInfo());
+
+        List<Map<String, Object>> relatedRecords = Arrays.asList(
+            createMap("author_id", 101, "title", "Post 1")
+            // No posts for author 102
+        );
+
+        when(schemaService.getTableSchema()).thenReturn(allTables);
+        when(jdbcTemplate.queryForList(any(String.class), any(Object[].class)))
+            .thenReturn(relatedRecords);
+
+        List<Map<String, Object>> result = relationshipService.expandRelationships(
+            records, tableInfo, embeddedFields, new LinkedMultiValueMap<>()
+        );
+
+        // Only author 101 should remain
+        assertEquals(1, result.size());
+        assertEquals("John Doe", result.get(0).get("name"));
+    }
+
+    // Helper table infos for M2M tests
+    private TableInfo createFilmsTableInfo() {
+        List<ColumnInfo> columns = Arrays.asList(
+            new ColumnInfo("id", "integer", true, false),
+            new ColumnInfo("title", "varchar", false, false)
+        );
+        return new TableInfo("films", columns, Collections.emptyList());
+    }
+
+    private TableInfo createActorsTableInfo() {
+        List<ColumnInfo> columns = Arrays.asList(
+            new ColumnInfo("id", "integer", true, false),
+            new ColumnInfo("name", "varchar", false, false)
+        );
+        return new TableInfo("actors", columns, Collections.emptyList());
+    }
+
+    private TableInfo createFilmActorsTableInfo() {
+        List<ColumnInfo> columns = Arrays.asList(
+            new ColumnInfo("film_id", "integer", false, false),
+            new ColumnInfo("actor_id", "integer", false, false)
+        );
+        List<ForeignKeyInfo> foreignKeys = Arrays.asList(
+            new ForeignKeyInfo("film_id", "films", "id"),
+            new ForeignKeyInfo("actor_id", "actors", "id")
+        );
+        return new TableInfo("film_actors", columns, foreignKeys);
     }
 
     // Helper methods

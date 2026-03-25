@@ -127,20 +127,54 @@ public class DatabaseSchemaService {
             ORDER BY t.table_name
             """;
             
+        List<String> tableAndViewNames;
         try {
-            return jdbcTemplate.queryForList(query, String.class, allowedSchema);
+            tableAndViewNames = jdbcTemplate.queryForList(query, String.class, allowedSchema);
         } catch (Exception e) {
             log.warn("Role-based table filtering failed, falling back to basic schema query: {}", e.getMessage());
-            // Fallback to basic query if role-based filtering fails
             String fallbackQuery = """
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = ? 
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = ?
                 AND table_type IN ('BASE TABLE', 'VIEW')
                 ORDER BY table_name
                 """;
-            return jdbcTemplate.queryForList(fallbackQuery, String.class, allowedSchema);
+            tableAndViewNames = jdbcTemplate.queryForList(fallbackQuery, String.class, allowedSchema);
         }
+
+        // Phase 7B: also include materialized views (not in information_schema.tables)
+        List<String> matViewNames = getMatViewNames();
+
+        List<String> all = new java.util.ArrayList<>(tableAndViewNames);
+        all.addAll(matViewNames);
+        return all;
+    }
+
+    /**
+     * Get materialized view names from pg_matviews (not included in information_schema.tables).
+     */
+    private List<String> getMatViewNames() {
+        try {
+            return jdbcTemplate.queryForList(
+                "SELECT matviewname FROM pg_catalog.pg_matviews WHERE schemaname = ?",
+                String.class, allowedSchema);
+        } catch (Exception e) {
+            log.warn("Failed to fetch materialized views: {}", e.getMessage());
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    /**
+     * Phase 7A: Resolve a column type that may be a domain type to its base PostgreSQL type.
+     * If the given type name exists in the domain map, returns the base type; otherwise returns the type as-is.
+     *
+     * @param typeName  the type name from pg_catalog (may be a domain type name)
+     * @param domainMap mapping of domain name → base type (from getDomainTypeToBaseTypeMap)
+     * @return the base PostgreSQL type, or typeName if not a domain
+     */
+    public String resolveDomainType(String typeName, Map<String, String> domainMap) {
+        if (typeName == null || domainMap == null) return typeName;
+        return domainMap.getOrDefault(typeName, typeName);
     }
 
     /**
@@ -216,22 +250,28 @@ public class DatabaseSchemaService {
      * Get foreign key information for a specific table
      */
     private List<ForeignKeyInfo> getTableForeignKeys(String tableName) {
+        // Use pg_catalog instead of information_schema.constraint_column_usage
+        // because the latter only shows constraints owned by the current user,
+        // which fails when the app connects as a non-owner role (e.g. appuser).
         String query = """
-            SELECT 
-                kcu.column_name,
-                ccu.table_name AS referenced_table,
-                ccu.column_name AS referenced_column
-            FROM information_schema.table_constraints tc
-            JOIN information_schema.key_column_usage kcu 
-                ON tc.constraint_name = kcu.constraint_name
-                AND tc.table_schema = kcu.table_schema
-            JOIN information_schema.constraint_column_usage ccu 
-                ON ccu.constraint_name = tc.constraint_name
-                AND ccu.table_schema = tc.table_schema
-            WHERE tc.constraint_type = 'FOREIGN KEY'
-            AND tc.table_schema = ?
-            AND tc.table_name = ?
-            ORDER BY kcu.ordinal_position
+            SELECT
+                a_child.attname  AS column_name,
+                cl_parent.relname AS referenced_table,
+                a_parent.attname AS referenced_column
+            FROM pg_constraint con
+            JOIN pg_class cl_child ON cl_child.oid = con.conrelid
+            JOIN pg_namespace ns ON ns.oid = cl_child.relnamespace
+            JOIN pg_class cl_parent ON cl_parent.oid = con.confrelid
+            JOIN pg_attribute a_child
+                ON a_child.attrelid = con.conrelid
+                AND a_child.attnum = ANY(con.conkey)
+            JOIN pg_attribute a_parent
+                ON a_parent.attrelid = con.confrelid
+                AND a_parent.attnum = ANY(con.confkey)
+            WHERE con.contype = 'f'
+              AND ns.nspname = ?
+              AND cl_child.relname = ?
+            ORDER BY a_child.attnum
             """;
             
         return jdbcTemplate.query(query, (rs, rowNum) -> {

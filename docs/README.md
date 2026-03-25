@@ -79,8 +79,6 @@ docs/
 │   ├── security.md            # Security best practices
 │   ├── deployment.md          # Deployment guide
 │   └── testing.md             # Testing guide
-├── comparison/                 # Comparisons
-│   └── hasura.md              # vs Hasura
 ├── stylesheets/               # Custom CSS
 │   └── extra.css
 ├── javascripts/               # Custom JavaScript

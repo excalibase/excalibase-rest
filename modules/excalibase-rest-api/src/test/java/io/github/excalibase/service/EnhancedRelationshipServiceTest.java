@@ -211,20 +211,20 @@ class EnhancedRelationshipServiceTest {
         when(jdbcTemplate.queryForList(
             argThat(sql -> sql.contains("SELECT name FROM authors") &&
                           sql.contains("WHERE id IN (?)") &&
-                          sql.contains("AND status = 'active'") &&
-                          sql.contains("AND age > '25'")),
+                          sql.contains("AND status = ?") &&
+                          sql.contains("AND age > ?")),
             any(Object[].class)
         )).thenReturn(relatedRecords);
 
         relationshipService.expandRelationships(records, tableInfo, embeddedFields, new LinkedMultiValueMap<>());
 
-        // Then: should apply filters in WHERE clause
+        // Then: should apply filters in WHERE clause (parameterized, not concatenated)
         verify(schemaService, times(1)).getTableSchema();
         verify(jdbcTemplate, times(1)).queryForList(
             argThat(sql -> sql.contains("SELECT name FROM authors") &&
                           sql.contains("WHERE id IN (?)") &&
-                          sql.contains("AND status = 'active'") &&
-                          sql.contains("AND age > '25'")),
+                          sql.contains("AND status = ?") &&
+                          sql.contains("AND age > ?")),
             any(Object[].class)
         );
     }
@@ -256,24 +256,24 @@ class EnhancedRelationshipServiceTest {
         // When: expanding with various operators
         when(schemaService.getTableSchema()).thenReturn(allTables);
         when(jdbcTemplate.queryForList(
-            argThat(sql -> sql.contains("age >= '30'") &&
-                          sql.contains("status != 'inactive'") &&
-                          sql.contains("bio LIKE '%writer%'") &&
-                          sql.contains("score < '100'") &&
-                          sql.contains("rating <= '5'")),
+            argThat(sql -> sql.contains("age >= ?") &&
+                          sql.contains("status != ?") &&
+                          sql.contains("bio LIKE ?") &&
+                          sql.contains("score < ?") &&
+                          sql.contains("rating <= ?")),
             any(Object[].class)
         )).thenReturn(relatedRecords);
 
         relationshipService.expandRelationships(records, tableInfo, embeddedFields, new LinkedMultiValueMap<>());
 
-        // Then: should handle all operators correctly
+        // Then: should handle all operators correctly with parameterized queries
         verify(schemaService, times(1)).getTableSchema();
         verify(jdbcTemplate, times(1)).queryForList(
-            argThat(sql -> sql.contains("age >= '30'") &&
-                          sql.contains("status != 'inactive'") &&
-                          sql.contains("bio LIKE '%writer%'") &&
-                          sql.contains("score < '100'") &&
-                          sql.contains("rating <= '5'")),
+            argThat(sql -> sql.contains("age >= ?") &&
+                          sql.contains("status != ?") &&
+                          sql.contains("bio LIKE ?") &&
+                          sql.contains("score < ?") &&
+                          sql.contains("rating <= ?")),
             any(Object[].class)
         );
     }
@@ -432,16 +432,16 @@ class EnhancedRelationshipServiceTest {
         // When: expanding with default equality filter
         when(schemaService.getTableSchema()).thenReturn(allTables);
         when(jdbcTemplate.queryForList(
-            argThat(sql -> sql.contains("status = 'active'")),
+            argThat(sql -> sql.contains("status = ?")),
             any(Object[].class)
         )).thenReturn(relatedRecords);
 
         relationshipService.expandRelationships(records, tableInfo, embeddedFields, new LinkedMultiValueMap<>());
 
-        // Then: should use equality operator
+        // Then: should use parameterized equality operator (not string concatenation)
         verify(schemaService, times(1)).getTableSchema();
         verify(jdbcTemplate, times(1)).queryForList(
-            argThat(sql -> sql.contains("status = 'active'")),
+            argThat(sql -> sql.contains("status = ?")),
             any(Object[].class)
         );
     }

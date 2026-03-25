@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.MultiValueMap;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -37,22 +38,35 @@ public class EnhancedRelationshipService {
      * Expand relationships using enhanced select fields with filtering
      */
     public List<Map<String, Object>> expandRelationships(
-            List<Map<String, Object>> records, 
-            TableInfo tableInfo, 
+            List<Map<String, Object>> records,
+            TableInfo tableInfo,
             List<SelectField> embeddedFields,
             MultiValueMap<String, String> allParams) {
-        
+
         if (records.isEmpty() || embeddedFields.isEmpty()) {
             return records;
         }
-        
+
         Map<String, TableInfo> allTables = schemaService.getTableSchema();
-        
+
+        // Always work with a mutable copy — original list may be fixed-size
+        List<Map<String, Object>> mutableRecords = new ArrayList<>(records);
+
         for (SelectField embeddedField : embeddedFields) {
-            expandSingleRelationshipEnhanced(records, tableInfo, embeddedField, allTables, allParams);
+            expandSingleRelationshipEnhanced(mutableRecords, tableInfo, embeddedField, allTables, allParams);
+            // Apply !inner filter: remove parent rows whose embedded list is null/empty
+            if (embeddedField.isInner()) {
+                String fieldName = embeddedField.getName();
+                mutableRecords.removeIf(record -> {
+                    Object val = record.get(fieldName);
+                    if (val == null) return true;
+                    if (val instanceof List<?> list) return list.isEmpty();
+                    return false;
+                });
+            }
         }
-        
-        return records;
+
+        return mutableRecords;
     }
     
     /**
@@ -91,9 +105,103 @@ public class EnhancedRelationshipService {
                 }
             }
             
+            // Check for Many-to-Many via junction table
+            // A junction table has FK to current table AND FK to the target table
+            for (var junctionEntry : allTables.entrySet()) {
+                TableInfo junctionTable = junctionEntry.getValue();
+                ForeignKeyInfo fkToCurrentTable = null;
+                ForeignKeyInfo fkToTargetTable = null;
+                for (var jFk : junctionTable.getForeignKeys()) {
+                    if (jFk.getReferencedTable().equalsIgnoreCase(tableInfo.getName())) {
+                        fkToCurrentTable = jFk;
+                    }
+                    if (jFk.getReferencedTable().equalsIgnoreCase(relationshipName)) {
+                        fkToTargetTable = jFk;
+                    }
+                }
+                if (fkToCurrentTable != null && fkToTargetTable != null) {
+                    expandManyToManyRelationship(records, tableInfo, junctionTable,
+                        fkToCurrentTable, fkToTargetTable, embeddedField, allTables);
+                    return;
+                }
+            }
+
             log.warn("Relationship '{}' not found for table '{}'", relationshipName, tableInfo.getName());
         } catch (Exception e) {
             log.error("Error expanding enhanced relationship '{}': {}", relationshipName, e.getMessage());
+        }
+    }
+
+    /**
+     * Expand Many-to-Many relationship through a junction table.
+     * e.g. films → film_actors → actors
+     */
+    private void expandManyToManyRelationship(
+            List<Map<String, Object>> records,
+            TableInfo currentTable,
+            TableInfo junctionTable,
+            ForeignKeyInfo fkToCurrentTable,
+            ForeignKeyInfo fkToTargetTable,
+            SelectField embeddedField,
+            Map<String, TableInfo> allTables) {
+
+        String currentPkColumn = currentTable.getColumns().stream()
+            .filter(ColumnInfo::isPrimaryKey)
+            .map(ColumnInfo::getName)
+            .findFirst().orElse("id");
+
+        Set<Object> pkValues = records.stream()
+            .map(r -> r.get(currentPkColumn))
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+
+        if (pkValues.isEmpty()) return;
+
+        String junctionTableName = junctionTable.getName();
+        String junctionFkCurrent = fkToCurrentTable.getColumnName();   // e.g. film_id
+        String junctionFkTarget = fkToTargetTable.getColumnName();      // e.g. actor_id
+        String targetTable = fkToTargetTable.getReferencedTable();      // e.g. actors
+        String targetPk = fkToTargetTable.getReferencedColumn();        // e.g. id
+
+        // SELECT <target_cols>, junction.junctionFkCurrent
+        // FROM junction JOIN target ON junction.junctionFkTarget = target.targetPk
+        // WHERE junction.junctionFkCurrent IN (...)
+        String rawSelectClause = buildSelectClause(embeddedField, targetTable);
+        // Prefix unqualified "*" with table name to avoid ambiguity; named cols get table prefix too
+        String targetSelectClause = "*".equals(rawSelectClause)
+            ? targetTable + ".*"
+            : Arrays.stream(rawSelectClause.split(","))
+                .map(col -> targetTable + "." + col.trim())
+                .collect(Collectors.joining(", "));
+        String inClause = pkValues.stream().map(v -> "?").collect(Collectors.joining(","));
+        String query = String.format(
+            "SELECT %s.%s, %s FROM %s JOIN %s ON %s.%s = %s.%s WHERE %s.%s IN (%s)",
+            junctionTableName, junctionFkCurrent,
+            targetSelectClause,
+            junctionTableName,
+            targetTable, junctionTableName, junctionFkTarget, targetTable, targetPk,
+            junctionTableName, junctionFkCurrent, inClause
+        );
+
+        log.debug("Many-to-many junction query: {}", query);
+
+        try {
+            List<Object> queryParams = new ArrayList<>(pkValues);
+            List<Map<String, Object>> junctionResult = jdbcTemplate.queryForList(query, queryParams.toArray());
+
+            // Group by the FK back to current table
+            Map<Object, List<Map<String, Object>>> grouped = junctionResult.stream()
+                .collect(Collectors.groupingBy(row -> row.get(junctionFkCurrent)));
+
+            for (Map<String, Object> record : records) {
+                Object pkValue = record.get(currentPkColumn);
+                List<Map<String, Object>> relatedList = grouped.getOrDefault(pkValue, List.of());
+                // Remove the junction FK column from each result row (not meaningful to caller)
+                relatedList.forEach(row -> row.remove(junctionFkCurrent));
+                record.put(embeddedField.getName(), relatedList);
+            }
+        } catch (Exception e) {
+            log.error("Error executing many-to-many junction query: {}", e.getMessage());
         }
     }
     
@@ -259,31 +367,40 @@ public class EnhancedRelationshipService {
                 
                 switch (operator.toLowerCase()) {
                     case "eq":
-                        conditions.add(column + " = '" + value + "'");
+                        queryParams.add(value);
+                        conditions.add(column + " = ?");
                         break;
                     case "gt":
-                        conditions.add(column + " > '" + value + "'");
+                        queryParams.add(value);
+                        conditions.add(column + " > ?");
                         break;
                     case "gte":
-                        conditions.add(column + " >= '" + value + "'");
+                        queryParams.add(value);
+                        conditions.add(column + " >= ?");
                         break;
                     case "lt":
-                        conditions.add(column + " < '" + value + "'");
+                        queryParams.add(value);
+                        conditions.add(column + " < ?");
                         break;
                     case "lte":
-                        conditions.add(column + " <= '" + value + "'");
+                        queryParams.add(value);
+                        conditions.add(column + " <= ?");
                         break;
                     case "neq":
-                        conditions.add(column + " != '" + value + "'");
+                        queryParams.add(value);
+                        conditions.add(column + " != ?");
                         break;
                     case "like":
-                        conditions.add(column + " LIKE '%" + value + "%'");
+                        queryParams.add("%" + value + "%");
+                        conditions.add(column + " LIKE ?");
                         break;
                     default:
-                        conditions.add(column + " = '" + value + "'");
+                        queryParams.add(value);
+                        conditions.add(column + " = ?");
                 }
             } else {
-                conditions.add(column + " = '" + operatorValue + "'");
+                queryParams.add(operatorValue);
+                conditions.add(column + " = ?");
             }
         }
         

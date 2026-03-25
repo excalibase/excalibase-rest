@@ -198,4 +198,42 @@ class SelectParserServiceTest {
         assertEquals(1, reviewsField.getSubFields().size());
         assertTrue(reviewsField.getSubFields().get(0).isWildcard());
     }
+
+    // ─── Phase 3: !inner join hint ────────────────────────────────────────────
+
+    @Test
+    void shouldParseInnerJoinHintOnEmbeddedField() {
+        List<SelectField> fields = selectParserService.parseSelect("actors!inner(name,age)");
+
+        assertEquals(1, fields.size());
+        SelectField field = fields.get(0);
+        assertEquals("actors", field.getName());
+        assertTrue(field.isEmbedded());
+        assertTrue(field.isInner());
+        assertEquals(2, field.getSubFields().size());
+        assertEquals("name", field.getSubFields().get(0).getName());
+        assertEquals("age", field.getSubFields().get(1).getName());
+    }
+
+    @Test
+    void shouldParseInnerJoinHintAlongsideSimpleFields() {
+        List<SelectField> fields = selectParserService.parseSelect("id,title,actors!inner(name)");
+
+        assertEquals(3, fields.size());
+        assertFalse(fields.get(0).isInner());
+        assertFalse(fields.get(1).isInner());
+        SelectField actorsField = fields.get(2);
+        assertEquals("actors", actorsField.getName());
+        assertTrue(actorsField.isInner());
+    }
+
+    @Test
+    void shouldParseEmbeddedFieldWithoutInnerAsNotInner() {
+        List<SelectField> fields = selectParserService.parseSelect("actors(name)");
+
+        assertEquals(1, fields.size());
+        SelectField field = fields.get(0);
+        assertEquals("actors", field.getName());
+        assertFalse(field.isInner());
+    }
 }

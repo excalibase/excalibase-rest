@@ -22,6 +22,11 @@ jobs:
         java-version: '21'
         distribution: 'corretto'
 
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
     - name: Cache Maven dependencies
       uses: actions/cache@v4
       with:
@@ -41,11 +46,6 @@ jobs:
 
     - name: Install dependencies (required by make targets)
       run: |
-        # Install jq if missing
-        if ! command -v jq >/dev/null 2>&1; then
-          sudo apt-get update && sudo apt-get install -y jq
-        fi
-
         # Install docker-compose if missing (GitHub Actions has 'docker compose' but make uses 'docker-compose')
         if ! command -v docker-compose >/dev/null 2>&1; then
           sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
@@ -53,18 +53,18 @@ jobs:
           docker-compose --version
         fi
 
+    - name: Install E2E test dependencies
+      run: cd e2e && npm install
+
     - name: Run complete E2E test suite
       run: make ci
 
     - name: Upload application logs on failure
       if: failure()
       run: |
-        echo "📋 Collecting application logs..."
-        if docker-compose -f docker-compose.yml -p excalibase-e2e logs excalibase-app > app-logs.txt 2>&1; then
-          echo "✅ Logs collected"
-        else
-          echo "⚠️ No logs available or services not running"
-        fi
+        echo "Collecting application logs..."
+        docker-compose -f docker-compose.yml -p excalibase-rest-app logs app > app-logs.txt 2>&1 || true
+        docker-compose -f docker-compose.yml -p excalibase-rest-app logs excalibase-watcher > watcher-logs.txt 2>&1 || true
 
     - name: Upload logs as artifact
       if: failure()
@@ -73,5 +73,6 @@ jobs:
         name: e2e-logs
         path: |
           app-logs.txt
+          watcher-logs.txt
         retention-days: 3
         if-no-files-found: ignore

@@ -184,6 +184,37 @@ curl -X POST http://localhost:20000/api/v1/admin/cache/invalidate
 curl http://localhost:20000/api/v1/admin/cache/stats
 ```
 
+## CDC / NATS Configuration
+
+Enable real-time change data capture subscriptions:
+
+```yaml
+app:
+  nats:
+    # Enable CDC subscriptions (requires NATS + excalibase-watcher)
+    enabled: false
+
+    # NATS server URL
+    url: nats://localhost:4222
+
+    # JetStream stream name
+    stream-name: CDC
+
+    # Subject prefix for CDC events
+    subject-prefix: cdc
+```
+
+#### Environment Variables
+
+```bash
+APP_NATS_ENABLED=true
+APP_NATS_URL=nats://nats:4222
+APP_NATS_STREAM_NAME=CDC
+APP_NATS_SUBJECT_PREFIX=cdc
+```
+
+See the [Real-time CDC guide](../features/realtime-cdc.md) for full setup instructions.
+
 ## Server Configuration
 
 ```yaml
@@ -413,6 +444,13 @@ app:
     allowed-headers: "*"
     allow-credentials: true
     max-age: 3600
+
+  # CDC / NATS
+  nats:
+    enabled: false
+    url: nats://localhost:4222
+    stream-name: CDC
+    subject-prefix: cdc
 
 # ============================================
 # Server Configuration

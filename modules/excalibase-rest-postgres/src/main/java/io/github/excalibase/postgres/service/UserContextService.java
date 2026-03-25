@@ -12,7 +12,7 @@ import java.util.Map;
 
 /**
  * PostgreSQL implementation for setting user context via session variables.
- * Enables Supabase-style RLS policies using current_setting('request.user_id').
+ * Enables RLS policies using current_setting('request.user_id').
  *
  * How it works:
  * 1. Uses SET to set session-scoped variables (lasts for the connection)

@@ -90,22 +90,38 @@ public class OperatorConstants {
     );
 
     /**
-     * Full-text search operators using PostgreSQL tsvector
+     * Full-text search operators using PostgreSQL tsvector.
      * These are expensive but optimized with GIN/GiST indexes.
+     *
+     * Supported syntax:
+     *   fts   → to_tsquery          (tsquery syntax)
+     *   plfts → plainto_tsquery     (plain text)
+     *   phfts → phraseto_tsquery    (phrase search)
+     *   wfts  → websearch_to_tsquery (web search syntax)
      */
     public static final Set<String> FTS_OPERATORS = Set.of(
-        "fts",      // plainto_tsquery
-        "plfts",    // phraseto_tsquery
-        "wfts"      // websearch_to_tsquery
+        "fts",    // to_tsquery
+        "plfts",  // plainto_tsquery
+        "phfts",  // phraseto_tsquery
+        "wfts"    // websearch_to_tsquery
     );
 
     /**
-     * NULL checking operators: is, isnotnull
-     * These are efficient and use indexes.
+     * NULL/boolean checking operators: is, isnotnull, isdistinct.
+     * Supported syntax: is.null, is.true, is.false, is.unknown, isdistinct.value
      */
     public static final Set<String> NULL_OPERATORS = Set.of(
-        "is",          // IS NULL, IS TRUE, IS FALSE
-        "isnotnull"    // IS NOT NULL
+        "is",          // IS NULL, IS TRUE, IS FALSE, IS UNKNOWN
+        "isnotnull",   // IS NOT NULL
+        "isdistinct"   // IS DISTINCT FROM
+    );
+
+    /**
+     * POSIX regex operators: match (~), imatch (~*).
+     */
+    public static final Set<String> REGEX_OPERATORS = Set.of(
+        "match",   // ~ case-sensitive POSIX regex
+        "imatch"   // ~* case-insensitive POSIX regex
     );
 
     // ========== Complexity Weights ==========
@@ -210,6 +226,8 @@ public class OperatorConstants {
             return COMPARISON_COST;
         } else if (STRING_OPERATORS.contains(op)) {
             return STRING_PATTERN_COST;
+        } else if (REGEX_OPERATORS.contains(op)) {
+            return STRING_PATTERN_COST;
         } else if (ARRAY_MEMBERSHIP_OPERATORS.contains(op)) {
             return ARRAY_MEMBERSHIP_COST; // Base cost, may be multiplied by item count
         } else if (ARRAY_OPERATORS.contains(op)) {
@@ -245,6 +263,7 @@ public class OperatorConstants {
         Set<String> all = new java.util.HashSet<>();
         all.addAll(COMPARISON_OPERATORS);
         all.addAll(STRING_OPERATORS);
+        all.addAll(REGEX_OPERATORS);
         all.addAll(ARRAY_MEMBERSHIP_OPERATORS);
         all.addAll(ARRAY_OPERATORS);
         all.addAll(JSON_OPERATORS);

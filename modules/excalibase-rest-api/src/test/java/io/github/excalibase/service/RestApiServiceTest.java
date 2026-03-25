@@ -83,6 +83,29 @@ class RestApiServiceTest {
         crudService = new CrudService(jdbcTemplate, validationService, typeConversionService, queryBuilderService);
         upsertService = new UpsertService(jdbcTemplate, validationService, typeConversionService, queryBuilderService);
 
+        // Delegate select parser mock to real implementation by default (null-safe)
+        SelectParserService realSelectParserService = new SelectParserService();
+        lenient().when(selectParserService.parseSelect(anyString()))
+            .thenAnswer(inv -> {
+                String p = inv.getArgument(0);
+                return p == null ? java.util.Collections.emptyList() : realSelectParserService.parseSelect(p);
+            });
+        lenient().when(selectParserService.getEmbeddedFields(any()))
+            .thenAnswer(inv -> {
+                java.util.List<SelectField> f = inv.getArgument(0);
+                return f == null ? java.util.Collections.emptyList() : realSelectParserService.getEmbeddedFields(f);
+            });
+        lenient().doAnswer(inv -> {
+            java.util.List<SelectField> f = inv.getArgument(0);
+            if (f != null) realSelectParserService.parseEmbeddedFilters(f, inv.getArgument(1));
+            return null;
+        }).when(selectParserService).parseEmbeddedFilters(any(), any());
+        lenient().when(selectParserService.hasEmbeddedFields(any()))
+            .thenAnswer(inv -> {
+                java.util.List<SelectField> f = inv.getArgument(0);
+                return f != null && realSelectParserService.hasEmbeddedFields(f);
+            });
+
         // Create the RestApiService with real service instances
         restApiService = new RestApiService(jdbcTemplate, schemaService, complexityService, batchLoader,
                 selectParserService, enhancedRelationshipService, validationService, typeConversionService,
@@ -104,7 +127,7 @@ class RestApiServiceTest {
 
         // When: getting records with pagination
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 5, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 5, null, "asc", null, null, true);
 
         // Then: should return paginated data
         @SuppressWarnings("unchecked")
@@ -116,7 +139,7 @@ class RestApiServiceTest {
         assertEquals(0, pagination.get("offset"));
         assertEquals(5, pagination.get("limit"));
         assertEquals(10L, pagination.get("total"));
-        assertEquals(true, pagination.get("hasMore"));
+        assertEquals(false, pagination.get("hasMore")); // 2 records < limit=5, no more pages
     }
 
     @Test
@@ -136,7 +159,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with filters
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should apply WHERE clause with filters
         verify(jdbcTemplate).queryForList(argThat(sql ->
@@ -168,7 +191,7 @@ class RestApiServiceTest {
         );
 
         // When: getting records with OR conditions
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should apply OR logic in WHERE clause
         verify(jdbcTemplate).queryForList(argThat(sql ->
@@ -191,7 +214,7 @@ class RestApiServiceTest {
 
         // When & Then: trying to access non-existent table should throw exception
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("invalid_table", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+            restApiService.getRecords("invalid_table", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
         });
         assertTrue(exception.getMessage().contains("Table not found: invalid_table"));
     }
@@ -200,13 +223,13 @@ class RestApiServiceTest {
     void shouldValidatePaginationLimits() {
         // When & Then: using invalid offset
         IllegalArgumentException exception1 = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("users", new LinkedMultiValueMap<>(), -1, 10, null, "asc", null, null);
+            restApiService.getRecords("users", new LinkedMultiValueMap<>(), -1, 10, null, "asc", null, null, false);
         });
         assertTrue(exception1.getMessage().contains("Offset must be between 0 and"));
 
         // When & Then: using excessive limit
         IllegalArgumentException exception2 = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 2000, null, "asc", null, null);
+            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 2000, null, "asc", null, null, false);
         });
         assertTrue(exception2.getMessage().contains("Limit must be between 1 and"));
     }
@@ -231,11 +254,11 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with column selection
-        Map<String, Object> result = restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", "id,name", null);
+        Map<String, Object> result = restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", "id,name", null, false);
 
         // Then: should use SELECT with specified columns
         verify(jdbcTemplate).queryForList(argThat(sql ->
-            sql.contains("SELECT id,name") && !sql.contains("SELECT *")
+            sql.contains("id") && sql.contains("name") && !sql.contains("SELECT *")
         ), any(Object[].class));
 
         // And: should return selected data
@@ -255,7 +278,7 @@ class RestApiServiceTest {
 
         // When & Then: using invalid column in select
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", "invalid_column", null);
+            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", "invalid_column", null, false);
         });
         assertTrue(exception.getMessage().contains("Invalid column: invalid_column"));
     }
@@ -404,7 +427,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(0L);
 
         // When: applying filters with type conversion
-        Map<String, Object> result = restApiService.getRecords("products", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("products", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should complete without error (type conversion works correctly)
         // Verification simplified due to permission checking calls
@@ -632,17 +655,17 @@ class RestApiServiceTest {
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
         params.add("content", "fts.postgresql tutorial");
 
-        // And: mock full-text search query
+        // And: mock full-text search query (fts → to_tsquery per spec)
         when(jdbcTemplate.queryForList(argThat(sql ->
             sql.contains("to_tsvector('english', content)") &&
-            sql.contains("plainto_tsquery('english', ?)")
+            sql.contains("to_tsquery('english', ?)")
         ), any(Object[].class))).thenReturn(Collections.singletonList(
             Map.of("id", 1, "title", "PostgreSQL Guide", "content", "PostgreSQL tutorial content")
         ));
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: searching with fts operator
-        Map<String, Object> result = restApiService.getRecords("posts", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("posts", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -660,17 +683,17 @@ class RestApiServiceTest {
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
         params.add("content", "plfts.exact phrase match");
 
-        // And: mock phrase search query
+        // And: mock phrase search query (plfts → plainto_tsquery per spec)
         when(jdbcTemplate.queryForList(argThat(sql ->
             sql.contains("to_tsvector('english', content)") &&
-            sql.contains("phraseto_tsquery('english', ?)")
+            sql.contains("plainto_tsquery('english', ?)")
         ), any(Object[].class))).thenReturn(Collections.singletonList(
             Map.of("id", 1, "content", "This is an exact phrase match example")
         ));
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: searching with plfts operator
-        Map<String, Object> result = restApiService.getRecords("posts", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("posts", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -697,7 +720,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: searching with wfts operator
-        Map<String, Object> result = restApiService.getRecords("posts", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("posts", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -813,7 +836,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with array filter
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -838,7 +861,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with arrayhasany filter
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -863,7 +886,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with arrayhasall filter
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -888,7 +911,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with array length filter
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -913,7 +936,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with JSON haskey filter
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -938,7 +961,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with JSON haskeys filter
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -963,7 +986,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with JSON contains filter
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -989,7 +1012,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with string operator filters
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -1016,7 +1039,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with case-insensitive filters
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -1047,7 +1070,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with null operator filters
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return matching records
         @SuppressWarnings("unchecked")
@@ -1074,7 +1097,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(3L);
 
         // When: getting records with complex ordering
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should return properly ordered records
         @SuppressWarnings("unchecked")
@@ -1116,7 +1139,7 @@ class RestApiServiceTest {
 
         // When & Then: trying to access restricted table
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("restricted_table", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+            restApiService.getRecords("restricted_table", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
         });
         assertTrue(exception.getMessage().contains("Table not found: restricted_table"));
     }
@@ -1136,7 +1159,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting basic records
-        Map<String, Object> result = restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
 
         // Then: should return records successfully
         @SuppressWarnings("unchecked")
@@ -1177,7 +1200,7 @@ class RestApiServiceTest {
 
         // When & Then: creating record with SQL error
         assertThrows(RuntimeException.class, () -> {
-            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
         });
     }
 
@@ -1268,7 +1291,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with arrays
-        Map<String, Object> result = restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
 
         // Then: should convert arrays properly
         @SuppressWarnings("unchecked")
@@ -1325,7 +1348,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: querying with complex types
-        Map<String, Object> result = restApiService.getRecords("complex_table", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("complex_table", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should handle complex type conversion
         @SuppressWarnings("unchecked")
@@ -1355,7 +1378,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with relationship expansion
-        Map<String, Object> result = restApiService.getRecords("orders", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, "customer_id");
+        Map<String, Object> result = restApiService.getRecords("orders", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, "customer_id", false);
 
         // Then: should expand relationship
         @SuppressWarnings("unchecked")
@@ -1391,7 +1414,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with multiple expansions
-        Map<String, Object> result = restApiService.getRecords("order_items", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, "customer_id,product_id");
+        Map<String, Object> result = restApiService.getRecords("order_items", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, "customer_id,product_id", false);
 
         // Then: should expand multiple relationships
         @SuppressWarnings("unchecked")
@@ -1405,7 +1428,7 @@ class RestApiServiceTest {
     void shouldHandleInvalidTableNameCharacters() {
         // When & Then: using table name with invalid characters
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("users'; DROP TABLE users; --", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+            restApiService.getRecords("users'; DROP TABLE users; --", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
         });
         assertTrue(exception.getMessage().contains("Invalid table name"));
     }
@@ -1414,7 +1437,7 @@ class RestApiServiceTest {
     void shouldHandleEmptyTableName() {
         // When & Then: using empty table name
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+            restApiService.getRecords("", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
         });
         assertTrue(exception.getMessage().contains("Table name cannot be empty"));
     }
@@ -1432,7 +1455,7 @@ class RestApiServiceTest {
         // When: getting records without permission - should throw exception (secure behavior)
         // Then: should throw IllegalArgumentException
         assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null);
+            restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", null, null, false);
         });
     }
 
@@ -1494,7 +1517,7 @@ class RestApiServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Long.class), any(Object[].class))).thenReturn(1L);
 
         // When: getting records with complex ordering
-        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+        Map<String, Object> result = restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
 
         // Then: should apply complex ordering
         verify(jdbcTemplate).queryForList(argThat(sql ->
@@ -1518,7 +1541,7 @@ class RestApiServiceTest {
 
         // When & Then: using invalid column in order by
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            restApiService.getRecords("users", params, 0, 10, null, "asc", null, null);
+            restApiService.getRecords("users", params, 0, 10, null, "asc", null, null, false);
         });
         assertTrue(exception.getMessage().contains("Invalid column"));
     }

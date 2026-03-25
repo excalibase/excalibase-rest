@@ -41,6 +41,9 @@
         <!--jackson for JSON/YAML processing-->
         <jackson.version>2.18.2</jackson.version>
 
+        <!--nats-->
+        <jnats.version>2.17.6</jnats.version>
+
         <!--testing-->
         <testcontainers.version>1.21.4</testcontainers.version>
 
@@ -115,6 +118,13 @@
                 <artifactId>spring-boot-starter-test</artifactId>
                 <scope>test</scope>
                 <version>${springboot.version}</version>
+            </dependency>
+
+            <!--NATS JetStream client-->
+            <dependency>
+                <groupId>io.nats</groupId>
+                <artifactId>jnats</artifactId>
+                <version>${jnats.version}</version>
             </dependency>
 
             <!--Testing-->

@@ -186,8 +186,26 @@ wait-ready: ## Wait for services to be ready
 	@echo "$(GREEN)✓ All services ready$(NC)"
 
 .PHONY: run-tests
-run-tests: ## Execute the actual test suite
-	@./scripts/e2e-test.sh || (echo "$(RED)❌ Tests failed$(NC)" && exit 1)
+run-tests: ## Execute the actual test suite (Jest E2E)
+	@cd e2e && npm install --silent && npm test || (echo "$(RED)❌ Tests failed$(NC)" && exit 1)
+
+.PHONY: test-e2e
+test-e2e: ## Run all Jest E2E tests (REST + CDC)
+	@echo "$(BLUE)🧪 Running E2E tests...$(NC)"
+	@cd e2e && npm install --silent && npm test || (echo "$(RED)❌ E2E tests failed$(NC)" && exit 1)
+	@echo "$(GREEN)✓ E2E tests passed$(NC)"
+
+.PHONY: test-cdc
+test-cdc: ## Run CDC E2E tests (SSE + WebSocket)
+	@echo "$(BLUE)🧪 Running CDC E2E tests...$(NC)"
+	@cd e2e && npm install --silent && npm run test:cdc || (echo "$(RED)❌ CDC tests failed$(NC)" && exit 1)
+	@echo "$(GREEN)✓ CDC tests passed$(NC)"
+
+.PHONY: test-rest-e2e
+test-rest-e2e: ## Run REST E2E tests
+	@echo "$(BLUE)🧪 Running REST E2E tests...$(NC)"
+	@cd e2e && npm install --silent && npm run test:rest || (echo "$(RED)❌ REST E2E tests failed$(NC)" && exit 1)
+	@echo "$(GREEN)✓ REST E2E tests passed$(NC)"
 
 # Status and logs
 .PHONY: status

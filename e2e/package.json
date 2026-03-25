@@ -1,0 +1,22 @@
+{
+  "name": "excalibase-rest-e2e",
+  "private": true,
+  "scripts": {
+    "test": "jest --runInBand",
+    "test:cdc": "jest cdc.test.js --runInBand",
+    "test:rest": "jest rest.test.js --runInBand"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 60000,
+    "verbose": true,
+    "forceExit": true
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "dependencies": {
+    "eventsource": "^2.0.2",
+    "ws": "^8.16.0"
+  }
+}

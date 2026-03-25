@@ -9,8 +9,10 @@ import io.github.excalibase.postgres.service.OpenApiService;
 import io.github.excalibase.postgres.service.QueryComplexityService;
 import io.github.excalibase.postgres.service.RestApiService;
 import io.github.excalibase.postgres.service.ValidationService;
+import io.github.excalibase.service.PreferHeaderParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -47,11 +50,12 @@ public class RestApiController {
     private final ValidationService validationService;
     private final AggregationService aggregationService;
     private final FunctionService functionService;
+    private final PreferHeaderParser preferParser;
 
     public RestApiController(RestApiService restApiService, OpenApiService openApiService,
                            DatabaseSchemaService schemaService, QueryComplexityService complexityService,
                            ValidationService validationService, AggregationService aggregationService,
-                           FunctionService functionService) {
+                           FunctionService functionService, PreferHeaderParser preferParser) {
         this.restApiService = restApiService;
         this.openApiService = openApiService;
         this.schemaService = schemaService;
@@ -59,12 +63,17 @@ public class RestApiController {
         this.validationService = validationService;
         this.aggregationService = aggregationService;
         this.functionService = functionService;
+        this.preferParser = preferParser;
     }
 
+    private static final String SINGULAR_MEDIA_TYPE = "application/vnd.pgrst.object+json";
+
     @GetMapping("/{table}")
-    public ResponseEntity<Map<String, Object>> getRecords(
+    public ResponseEntity<?> getRecords(
             @PathVariable String table,
-            @RequestParam MultiValueMap<String, String> allParams) {
+            @RequestParam MultiValueMap<String, String> allParams,
+            @RequestHeader(value = "Prefer", required = false) String prefer,
+            @RequestHeader(value = "Accept", required = false) String accept) {
         try {
             int offset = Integer.parseInt(allParams.getFirst("offset") != null ? allParams.getFirst("offset") : "0");
             int limit = Integer.parseInt(allParams.getFirst("limit") != null ? allParams.getFirst("limit") : "100");
@@ -80,7 +89,6 @@ public class RestApiController {
 
             Map<String, Object> result;
 
-
             if (containsAggregateFunction(select)) {
                 List<Map<String, Object>> aggregateResults = aggregationService.getInlineAggregates(
                     table, select, allParams, null
@@ -94,8 +102,40 @@ public class RestApiController {
             if (first != null || after != null || last != null || before != null) {
                 result = restApiService.getRecordsWithCursor(table, allParams, first, after, last, before, orderBy, orderDirection, select, expand);
             } else {
-                result = restApiService.getRecords(table, allParams, offset, limit, orderBy, orderDirection, select, expand);
+                boolean includeCount = "exact".equals(preferParser.getCount(prefer));
+                result = restApiService.getRecords(table, allParams, offset, limit, orderBy, orderDirection, select, expand, includeCount);
             }
+
+            // Phase 8A: singular object response for Accept: application/vnd.pgrst.object+json
+            boolean singular = accept != null && accept.contains(SINGULAR_MEDIA_TYPE);
+            if (singular) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> data = (List<Map<String, Object>>) result.get("data");
+                if (data == null || data.size() != 1) {
+                    return ResponseEntity.status(HttpStatus.NOT_ACCEPTABLE)
+                        .body(Map.of("error", "Singular result required but got " + (data == null ? 0 : data.size()) + " rows"));
+                }
+                return ResponseEntity.ok()
+                    .contentType(org.springframework.http.MediaType.parseMediaType(SINGULAR_MEDIA_TYPE))
+                    .body(data.get(0));
+            }
+
+            // RFC 7240 Content-Range header
+            String countPref = preferParser.getCount(prefer);
+            if (countPref != null) {
+                Object totalObj = result.get("pagination") instanceof Map
+                    ? ((Map<?, ?>) result.get("pagination")).get("total") : null;
+                long total = totalObj instanceof Number ? ((Number) totalObj).longValue() : 0L;
+                @SuppressWarnings("unchecked")
+                List<?> data = (List<?>) result.get("data");
+                int count = data != null ? data.size() : 0;
+                long end = count > 0 ? offset + count - 1 : offset;
+                String contentRange = offset + "-" + end + "/" + total;
+                HttpHeaders headers = new HttpHeaders();
+                headers.set("Content-Range", contentRange);
+                return ResponseEntity.ok().headers(headers).body(result);
+            }
+
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -150,10 +190,11 @@ public class RestApiController {
     public ResponseEntity<?> createRecord(
             @PathVariable String table,
             @RequestBody Object data,
-            @RequestParam(required = false) String prefer) {
+            @RequestHeader(value = "Prefer", required = false) String prefer) {
 
         try {
-            boolean isUpsert = "resolution=merge-duplicates".equals(prefer);
+            boolean isUpsert = preferParser.isUpsert(prefer);
+            String returnMode = preferParser.getReturn(prefer);
 
             if (data instanceof List) {
                 @SuppressWarnings("unchecked")
@@ -170,7 +211,8 @@ public class RestApiController {
                 } else {
                     results = restApiService.createBulkRecords(table, bulkData);
                 }
-                return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("data", results, "count", results.size()));
+                return applyReturnMode(ResponseEntity.status(HttpStatus.CREATED), returnMode, table,
+                    Map.of("data", results, "count", results.size()), null);
             } else if (data instanceof Map) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> singleData = (Map<String, Object>) data;
@@ -192,7 +234,7 @@ public class RestApiController {
                     return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
                 }
 
-                return ResponseEntity.status(HttpStatus.CREATED).body(result);
+                return applyReturnMode(ResponseEntity.status(HttpStatus.CREATED), returnMode, table, result, result);
             } else {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(Map.of("error", "Request body must be an object or array"));
@@ -299,10 +341,11 @@ public class RestApiController {
 
     // PATCH /api/v1/{table}/{id} - Update a record (partial update)
     @PatchMapping("/{table}/{id}")
-    public ResponseEntity<Map<String, Object>> patchRecord(
+    public ResponseEntity<?> patchRecord(
             @PathVariable String table,
             @PathVariable String id,
-            @RequestBody Map<String, Object> data) {
+            @RequestBody Map<String, Object> data,
+            @RequestHeader(value = "Prefer", required = false) String prefer) {
 
         try {
             // Basic security validation
@@ -315,6 +358,11 @@ public class RestApiController {
             if (result == null) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("error", "Record not found"));
+            }
+
+            String returnMode = preferParser.getReturn(prefer);
+            if (PreferHeaderParser.RETURN_MINIMAL.equals(returnMode)) {
+                return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
             }
             return ResponseEntity.ok(result);
         } catch (ValidationException e) {
@@ -335,15 +383,21 @@ public class RestApiController {
     public ResponseEntity<Map<String, Object>> deleteRecord(
             @PathVariable String table,
             @PathVariable(required = false) String id,
-            @RequestParam MultiValueMap<String, String> allParams) {
+            @RequestParam MultiValueMap<String, String> allParams,
+            @RequestHeader(value = "Prefer", required = false) String prefer) {
 
         try {
+            // DELETE defaults to 204 No Content; explicit "return=representation" returns body
+            boolean wantsBody = prefer != null && prefer.contains("return=representation");
             if (id != null) {
                 // Single record deletion by ID
                 boolean deleted = restApiService.deleteRecord(table, id);
                 if (!deleted) {
                     return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("error", "Record not found"));
+                }
+                if (wantsBody) {
+                    return ResponseEntity.ok(Map.of("message", "deleted", "id", id));
                 }
                 return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
             } else {
@@ -610,6 +664,48 @@ public class RestApiController {
     /**
      * Enhance table schema information with PostgreSQL type details
      */
+    /**
+     * Apply Prefer return mode to a response builder.
+     * - "representation" (default): include body
+     * - "headers-only": 201/200 with Location header, no body
+     * - "minimal": 204 No Content
+     *
+     * @param builder    response builder pre-set with status
+     * @param returnMode parsed return preference
+     * @param table      table name (for Location header)
+     * @param body       full response body (for representation mode)
+     * @param record     the created/updated record (for extracting PK, may be null)
+     */
+    private ResponseEntity<?> applyReturnMode(ResponseEntity.BodyBuilder builder, String returnMode,
+                                               String table, Object body, Map<String, Object> record) {
+        if (PreferHeaderParser.RETURN_MINIMAL.equals(returnMode)) {
+            return ResponseEntity.status(HttpStatus.NO_CONTENT).build();
+        }
+        if (PreferHeaderParser.RETURN_HEADERS_ONLY.equals(returnMode)) {
+            String location = buildLocationHeader(table, record);
+            return builder.header("Location", location).build();
+        }
+        // Default: representation
+        return builder.body(body);
+    }
+
+    private String buildLocationHeader(String table, Map<String, Object> record) {
+        if (record == null) return "/api/v1/" + table;
+        // Try to find the primary key value
+        try {
+            TableInfo tableInfo = validationService.getValidatedTableInfo(table);
+            for (io.github.excalibase.model.ColumnInfo col : tableInfo.getColumns()) {
+                if (col.isPrimaryKey() && record.containsKey(col.getName())) {
+                    return "/api/v1/" + table + "/" + record.get(col.getName());
+                }
+            }
+        } catch (Exception ignored) {
+            // fallback below
+        }
+        Object id = record.get("id");
+        return "/api/v1/" + table + (id != null ? "/" + id : "");
+    }
+
     private Map<String, Object> enhanceTableSchemaInfo(TableInfo tableInfo) {
         Map<String, Object> enhanced = new HashMap<>();
         enhanced.put("name", tableInfo.getName());
@@ -729,6 +825,16 @@ public class RestApiController {
      *
      * Clears cached schema metadata. Use when database schema changes.
      */
+    /**
+     * POST /api/v1/schema/reload - Schema cache reload endpoint.
+     * Clears cached schema metadata. Use when database schema changes.
+     */
+    @PostMapping("/schema/reload")
+    public ResponseEntity<?> reloadSchema() {
+        schemaService.clearCache();
+        return ResponseEntity.ok(Map.of("status", "refreshed"));
+    }
+
     @PostMapping("/admin/cache/schema/invalidate")
     public ResponseEntity<Map<String, Object>> invalidateSchemaCache() {
         try {

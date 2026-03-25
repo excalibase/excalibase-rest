@@ -201,7 +201,8 @@ class RestApiControllerIntegrationTest {
     @Test
     @Order(1)
     void shouldGetRecordsSuccessfully() throws Exception {
-        mockMvc.perform(get("/api/v1/users"))
+        mockMvc.perform(get("/api/v1/users")
+                        .header("Prefer", "count=exact"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.data").isArray())
