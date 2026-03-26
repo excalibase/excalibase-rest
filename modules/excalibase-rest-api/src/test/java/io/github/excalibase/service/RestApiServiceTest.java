@@ -163,7 +163,7 @@ class RestApiServiceTest {
 
         // Then: should apply WHERE clause with filters
         verify(jdbcTemplate).queryForList(argThat(sql ->
-            sql.contains("WHERE") && sql.contains("name LIKE ?") && sql.contains("age > ?")
+            sql.contains("WHERE") && sql.contains("\"name\" LIKE ?") && sql.contains("\"age\" > ?")
         ), any(Object[].class));
 
         // And: should return filtered data
@@ -535,7 +535,7 @@ class RestApiServiceTest {
         // And: mock successful upsert with RETURNING
         when(jdbcTemplate.queryForList(argThat(sql ->
             sql.contains("INSERT INTO users") &&
-            sql.contains("ON CONFLICT (id)") &&
+            sql.contains("ON CONFLICT (\"id\")") &&
             sql.contains("DO UPDATE SET") &&
             sql.contains("RETURNING *")
         ), any(Object[].class))).thenReturn(Collections.singletonList(
@@ -585,7 +585,7 @@ class RestApiServiceTest {
 
         // And: mock DO NOTHING result (empty)
         when(jdbcTemplate.queryForList(argThat(sql ->
-            sql.contains("ON CONFLICT (id) DO NOTHING")
+            sql.contains("ON CONFLICT (\"id\") DO NOTHING")
         ), any(Object[].class))).thenReturn(Collections.emptyList());
 
         // When: upserting with only primary key
@@ -609,7 +609,7 @@ class RestApiServiceTest {
         // And: mock successful bulk upsert
         when(jdbcTemplate.queryForList(argThat(sql ->
             sql.contains("INSERT INTO users") &&
-            sql.contains("ON CONFLICT (id)") &&
+            sql.contains("ON CONFLICT (\"id\")") &&
             sql.contains("VALUES")
         ), any(Object[].class))).thenReturn(Arrays.asList(
             Map.of("id", 1, "name", "John Updated", "email", "john@example.com"),
@@ -657,7 +657,7 @@ class RestApiServiceTest {
 
         // And: mock full-text search query (fts → to_tsquery per spec)
         when(jdbcTemplate.queryForList(argThat(sql ->
-            sql.contains("to_tsvector('english', content)") &&
+            sql.contains("to_tsvector('english', \"content\")") &&
             sql.contains("to_tsquery('english', ?)")
         ), any(Object[].class))).thenReturn(Collections.singletonList(
             Map.of("id", 1, "title", "PostgreSQL Guide", "content", "PostgreSQL tutorial content")
@@ -685,7 +685,7 @@ class RestApiServiceTest {
 
         // And: mock phrase search query (plfts → plainto_tsquery per spec)
         when(jdbcTemplate.queryForList(argThat(sql ->
-            sql.contains("to_tsvector('english', content)") &&
+            sql.contains("to_tsvector('english', \"content\")") &&
             sql.contains("plainto_tsquery('english', ?)")
         ), any(Object[].class))).thenReturn(Collections.singletonList(
             Map.of("id", 1, "content", "This is an exact phrase match example")
@@ -712,7 +712,7 @@ class RestApiServiceTest {
 
         // And: mock websearch query
         when(jdbcTemplate.queryForList(argThat(sql ->
-            sql.contains("to_tsvector('english', content)") &&
+            sql.contains("to_tsvector('english', \"content\")") &&
             sql.contains("websearch_to_tsquery('english', ?)")
         ), any(Object[].class))).thenReturn(Collections.singletonList(
             Map.of("id", 1, "content", "PostgreSQL database tutorial")

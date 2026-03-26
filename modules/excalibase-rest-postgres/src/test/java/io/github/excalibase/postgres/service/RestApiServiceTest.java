@@ -151,7 +151,7 @@ class RestApiServiceTest {
 
         // Then: should apply WHERE clause with filters
         verify(jdbcTemplate, times(1)).queryForList(
-                argThat(sql -> sql.contains("WHERE") && sql.contains("name LIKE ?") && sql.contains("age > ?")),
+                argThat(sql -> sql.contains("WHERE") && sql.contains("\"name\" LIKE ?") && sql.contains("\"age\" > ?")),
                 any(Object[].class)
         );
 
@@ -527,7 +527,7 @@ class RestApiServiceTest {
         // And: mock successful upsert with RETURNING
         when(jdbcTemplate.queryForList(
                 argThat(sql -> sql.contains("INSERT INTO users") &&
-                        sql.contains("ON CONFLICT (id)") &&
+                        sql.contains("ON CONFLICT (\"id\")") &&
                         sql.contains("DO UPDATE SET") &&
                         sql.contains("RETURNING *")),
                 any(Object[].class)
@@ -574,7 +574,7 @@ class RestApiServiceTest {
 
         // And: mock DO NOTHING result (empty)
         when(jdbcTemplate.queryForList(
-                argThat(sql -> sql.contains("ON CONFLICT (id) DO NOTHING")),
+                argThat(sql -> sql.contains("ON CONFLICT (\"id\") DO NOTHING")),
                 any(Object[].class)
         )).thenReturn(Collections.emptyList());
 
@@ -599,7 +599,7 @@ class RestApiServiceTest {
         // And: mock successful bulk upsert
         when(jdbcTemplate.queryForList(
                 argThat(sql -> sql.contains("INSERT INTO users") &&
-                        sql.contains("ON CONFLICT (id)") &&
+                        sql.contains("ON CONFLICT (\"id\")") &&
                         sql.contains("VALUES")),
                 any(Object[].class)
         )).thenReturn(Arrays.asList(
@@ -649,7 +649,7 @@ class RestApiServiceTest {
 
         // And: mock full-text search query (fts → to_tsquery per spec)
         when(jdbcTemplate.queryForList(
-                argThat(sql -> sql.contains("to_tsvector('english', content)") &&
+                argThat(sql -> sql.contains("to_tsvector('english', \"content\")") &&
                         sql.contains("to_tsquery('english', ?)")),
                 any(Object[].class)
         )).thenReturn(Collections.singletonList(createMap("id", 1, "title", "PostgreSQL Guide", "content", "PostgreSQL tutorial content")));
@@ -677,7 +677,7 @@ class RestApiServiceTest {
 
         // And: mock phrase search query (plfts → plainto_tsquery per spec)
         when(jdbcTemplate.queryForList(
-                argThat(sql -> sql.contains("to_tsvector('english', content)") &&
+                argThat(sql -> sql.contains("to_tsvector('english', \"content\")") &&
                         sql.contains("plainto_tsquery('english', ?)")),
                 any(Object[].class)
         )).thenReturn(Collections.singletonList(createMap("id", 1, "content", "This is an exact phrase match example")));
@@ -704,7 +704,7 @@ class RestApiServiceTest {
 
         // And: mock websearch query
         when(jdbcTemplate.queryForList(
-                argThat(sql -> sql.contains("to_tsvector('english', content)") &&
+                argThat(sql -> sql.contains("to_tsvector('english', \"content\")") &&
                         sql.contains("websearch_to_tsquery('english', ?)")),
                 any(Object[].class)
         )).thenReturn(Collections.singletonList(createMap("id", 1, "content", "PostgreSQL database tutorial")));
@@ -1608,9 +1608,9 @@ class RestApiServiceTest {
         // When: select with alias syntax
         restApiService.getRecords("users", params, 0, 10, null, "asc", "fn:name", null, false);
 
-        // Then: SQL should contain 'name AS "fn"'
+        // Then: SQL should contain '"name" AS "fn"'
         verify(jdbcTemplate).queryForList(
-            argThat(sql -> sql.contains("name AS \"fn\"")),
+            argThat(sql -> sql.contains("\"name\" AS \"fn\"")),
             any(Object[].class)
         );
     }
@@ -1628,9 +1628,9 @@ class RestApiServiceTest {
         // When: select with type cast syntax
         restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", "age::text", null, false);
 
-        // Then: SQL should contain 'age::text'
+        // Then: SQL should contain '"age"::text'
         verify(jdbcTemplate).queryForList(
-            argThat(sql -> sql.contains("age::text")),
+            argThat(sql -> sql.contains("\"age\"::text")),
             any(Object[].class)
         );
     }
@@ -1648,9 +1648,9 @@ class RestApiServiceTest {
         // When: select with alias + cast
         restApiService.getRecords("users", new LinkedMultiValueMap<>(), 0, 10, null, "asc", "display_name:name,age::text", null, false);
 
-        // Then: SQL should contain 'name AS "display_name"' and 'age::text'
+        // Then: SQL should contain '"name" AS "display_name"' and '"age"::text'
         verify(jdbcTemplate).queryForList(
-            argThat(sql -> sql.contains("name AS \"display_name\"") && sql.contains("age::text")),
+            argThat(sql -> sql.contains("\"name\" AS \"display_name\"") && sql.contains("\"age\"::text")),
             any(Object[].class)
         );
     }

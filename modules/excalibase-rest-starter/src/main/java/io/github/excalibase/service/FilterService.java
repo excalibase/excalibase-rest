@@ -191,39 +191,43 @@ public class FilterService {
         if (!validColumns.contains(column)) {
             throw new IllegalArgumentException("Invalid column for filtering: " + column);
         }
-        
+
         // Basic SQL injection protection
         validationService.validateFilterValue(value);
-        
+
         // Parse operator.value format
         if (!value.contains(".")) {
             // No operator specified, default to equality
             params.add(typeConversionService.convertValueToColumnType(column, value, tableInfo));
-            return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+            return q(column) + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
         }
-        
+
         int firstDot = value.indexOf('.');
         String operator = value.substring(0, firstDot);
         String operatorValue = value.substring(firstDot + 1);
-        
+
         return buildConditionForOperator(column, operator, operatorValue, params, tableInfo);
+    }
+
+    /** Quote a SQL identifier (column/table name) with double quotes. */
+    private static String q(String identifier) {
+        return "\"" + identifier + "\"";
     }
 
     /**
      * Build SQL condition for specific operator
      */
     private String buildConditionForOperator(String column, String operator, String operatorValue, List<Object> params, TableInfo tableInfo) {
+        String qc = q(column); // quoted column for SQL
         switch (operator.toLowerCase()) {
             // ── Excalibase `not` prefix ──────────────────────────────────────────────
-            // e.g. col=not.eq.5, col=not.like.foo, col=not.is.null, col=not.in.(1,2,3)
             case "not": {
                 int dot = operatorValue.indexOf('.');
                 if (dot > 0) {
                     String innerOp = operatorValue.substring(0, dot);
                     String innerVal = operatorValue.substring(dot + 1);
-                    // Produce cleaner SQL for common negations
                     if ("is".equalsIgnoreCase(innerOp) && "null".equalsIgnoreCase(innerVal)) {
-                        return column + " IS NOT NULL";
+                        return qc + " IS NOT NULL";
                     }
                     if ("in".equalsIgnoreCase(innerOp)) {
                         return buildNotInCondition(column, innerVal, params, tableInfo);
@@ -231,197 +235,148 @@ public class FilterService {
                     String innerCond = buildConditionForOperator(column, innerOp, innerVal, params, tableInfo);
                     return "NOT (" + innerCond + ")";
                 }
-                // not without a sub-operator — treat as IS NOT NULL
-                return column + " IS NOT NULL";
+                return qc + " IS NOT NULL";
             }
 
             case "eq":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
-                
+                return qc + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
             case "neq":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " <> " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
-                
+                return qc + " <> " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
             case "gt":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " > " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
-                
+                return qc + " > " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
             case "gte":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " >= " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
-                
+                return qc + " >= " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
             case "lt":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " < " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
-                
+                return qc + " < " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
             case "lte":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " <= " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
-                
+                return qc + " <= " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+
             case "like":
                 params.add("%" + operatorValue + "%");
-                return column + " LIKE ?";
-                
+                return qc + " LIKE ?";
             case "ilike":
                 params.add("%" + operatorValue + "%");
-                return column + " ILIKE ?";
-                
+                return qc + " ILIKE ?";
+
             case "in":
                 return buildInCondition(column, operatorValue, params, tableInfo);
-                
             case "notin":
                 return buildNotInCondition(column, operatorValue, params, tableInfo);
-                
+
             case "is":
                 return buildIsCondition(column, operatorValue, params, tableInfo);
-
             case "isnotnull":
-                return column + " IS NOT NULL";
+                return qc + " IS NOT NULL";
 
-            // ── Excalibase: IS DISTINCT FROM ─────────────────────────────────────────
             case "isdistinct":
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " IS DISTINCT FROM " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+                return qc + " IS DISTINCT FROM " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
 
-            // ── Excalibase: POSIX regex ────────────────────────────────────────────
             case "match":
                 params.add(operatorValue);
-                return column + " ~ ?";
-
+                return qc + " ~ ?";
             case "imatch":
                 params.add(operatorValue);
-                return column + " ~* ?";
-                
+                return qc + " ~* ?";
             case "startswith":
                 params.add(operatorValue + "%");
-                return column + " LIKE ?";
-                
+                return qc + " LIKE ?";
             case "endswith":
                 params.add("%" + operatorValue);
-                return column + " LIKE ?";
-                
+                return qc + " LIKE ?";
+
             // JSON operators
             case "haskey":
                 params.add(operatorValue);
-                return "jsonb_exists(" + column + ", ?)";
-                
+                return "jsonb_exists(" + qc + ", ?)";
             case "haskeys":
                 return buildJsonHasKeysCondition(column, operatorValue, "?&");
-                
             case "hasanykeys":
                 return buildJsonHasKeysCondition(column, operatorValue, "?|");
-                
             case "jsoncontains":
             case "contains":
                 return buildJsonContainsCondition(column, operatorValue, params, "@>");
-                
             case "jsoncontained":
             case "containedin":
                 return buildJsonContainsCondition(column, operatorValue, params, "<@");
-                
             case "jsonexists":
             case "exists":
                 params.add(operatorValue);
-                return column + " ? ?";
-                
+                return qc + " ? ?";
             case "jsonexistsany":
             case "existsany":
                 return buildJsonHasKeysCondition(column, operatorValue, "?|");
-                
             case "jsonexistsall":
             case "existsall":
                 return buildJsonHasKeysCondition(column, operatorValue, "?&");
-                
             case "jsonpath":
                 params.add(operatorValue);
-                return column + " @? ?::jsonpath";
-                
+                return qc + " @? ?::jsonpath";
             case "jsonpathexists":
                 params.add(operatorValue);
-                return column + " @@ ?::jsonpath";
-                
+                return qc + " @@ ?::jsonpath";
+
             // Array operators
             case "arraycontains":
                 params.add(operatorValue);
-                return column + " @> ARRAY[?]::" + typeConversionService.getColumnType(column, tableInfo) + "[]";
-                
+                return qc + " @> ARRAY[?]::" + typeConversionService.getColumnType(column, tableInfo) + "[]";
             case "arrayhasany":
                 return buildArrayHasCondition(column, operatorValue, "&&", tableInfo);
-                
             case "arrayhasall":
                 return buildArrayHasAllCondition(column, operatorValue, params);
-                
             case "arraylength":
                 params.add(Integer.parseInt(operatorValue));
-                return "array_length(" + column + ", 1) = ?";
-                
-            // ── Full-text search operators (Excalibase-compatible) ─────────────────
-            // fts  → to_tsquery         (user provides tsquery syntax: 'hello & world')
+                return "array_length(" + qc + ", 1) = ?";
+
+            // Full-text search operators
             case "fts":
                 params.add(operatorValue);
-                return "to_tsvector('english', " + column + ") @@ to_tsquery('english', ?)";
-
-            // plfts → plainto_tsquery   (plain text: 'hello world' → 'hello' & 'world')
+                return "to_tsvector('english', " + qc + ") @@ to_tsquery('english', ?)";
             case "plfts":
                 params.add(operatorValue);
-                return "to_tsvector('english', " + column + ") @@ plainto_tsquery('english', ?)";
-
-            // phfts → phraseto_tsquery  (phrase search: 'hello world' → 'hello' <-> 'world')
+                return "to_tsvector('english', " + qc + ") @@ plainto_tsquery('english', ?)";
             case "phfts":
                 params.add(operatorValue);
-                return "to_tsvector('english', " + column + ") @@ phraseto_tsquery('english', ?)";
-
-            // wfts  → websearch_to_tsquery (web search syntax: "hello world" -bad)
+                return "to_tsvector('english', " + qc + ") @@ phraseto_tsquery('english', ?)";
             case "wfts":
                 params.add(operatorValue);
-                return "to_tsvector('english', " + column + ") @@ websearch_to_tsquery('english', ?)";
+                return "to_tsvector('english', " + qc + ") @@ websearch_to_tsquery('english', ?)";
 
-            // ── Range / geometric operators (Excalibase-compatible) ────────────────
-            // cs  → @>  (contains)
+            // Range / geometric operators
             case "cs":
                 params.add(operatorValue);
-                return column + " @> ?";
-
-            // cd  → <@  (contained in)
+                return qc + " @> ?";
             case "cd":
                 params.add(operatorValue);
-                return column + " <@ ?";
-
-            // ov  → &&  (overlaps)
+                return qc + " <@ ?";
             case "ov":
                 params.add(operatorValue);
-                return column + " && ?";
-
-            // sl  → <<  (strictly left of)
+                return qc + " && ?";
             case "sl":
                 params.add(operatorValue);
-                return column + " << ?";
-
-            // sr  → >>  (strictly right of)
+                return qc + " << ?";
             case "sr":
                 params.add(operatorValue);
-                return column + " >> ?";
-
-            // nxl → &<  (does not extend to the left of)
+                return qc + " >> ?";
             case "nxl":
                 params.add(operatorValue);
-                return column + " &< ?";
-
-            // nxr → &>  (does not extend to the right of)
+                return qc + " &< ?";
             case "nxr":
                 params.add(operatorValue);
-                return column + " &> ?";
-
-            // adj → -|- (is adjacent to)
+                return qc + " &> ?";
             case "adj":
                 params.add(operatorValue);
-                return column + " -|- ?";
+                return qc + " -|- ?";
 
             default:
-                // Unknown operator, treat as equality
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+                return qc + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
         }
     }
 
@@ -444,7 +399,7 @@ public class FilterService {
                     placeholders.add(typeConversionService.buildPlaceholderWithCast(column, tableInfo));
                 }
             }
-            return column + " IN (" + String.join(",", placeholders) + ")";
+            return q(column) + " IN (" + String.join(",", placeholders) + ")";
         }
         return null;
     }
@@ -468,7 +423,7 @@ public class FilterService {
                     placeholders.add(typeConversionService.buildPlaceholderWithCast(column, tableInfo));
                 }
             }
-            return column + " NOT IN (" + String.join(",", placeholders) + ")";
+            return q(column) + " NOT IN (" + String.join(",", placeholders) + ")";
         }
         return null;
     }
@@ -477,18 +432,19 @@ public class FilterService {
      * Build IS condition — Excalibase-compatible: null, true, false, unknown.
      */
     private String buildIsCondition(String column, String operatorValue, List<Object> params, TableInfo tableInfo) {
+        String qc = q(column);
         switch (operatorValue.toLowerCase()) {
             case "null":
-                return column + " IS NULL";
+                return qc + " IS NULL";
             case "true":
-                return column + " IS TRUE";
+                return qc + " IS TRUE";
             case "false":
-                return column + " IS FALSE";
+                return qc + " IS FALSE";
             case "unknown":
-                return column + " IS UNKNOWN";
+                return qc + " IS UNKNOWN";
             default:
                 params.add(typeConversionService.convertValueToColumnType(column, operatorValue, tableInfo));
-                return column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+                return qc + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
         }
     }
 
@@ -506,7 +462,7 @@ public class FilterService {
             String arrayLiteral = "ARRAY[" + cleanKeys.stream()
                 .map(key -> "'" + key + "'")
                 .collect(Collectors.joining(",")) + "]";
-            return column + " " + operator + " " + arrayLiteral;
+            return q(column) + " " + operator + " " + arrayLiteral;
         } else {
             throw new IllegalArgumentException("JSON keys operator requires array format: [\"key1\",\"key2\"]");
         }
@@ -520,7 +476,7 @@ public class FilterService {
             // Validate JSON format
             objectMapper.readTree(operatorValue);
             params.add(operatorValue);
-            return column + " " + operator + " ?::jsonb";
+            return q(column) + " " + operator + " ?::jsonb";
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid JSON format for contains operator: " + operatorValue);
         }
@@ -541,7 +497,7 @@ public class FilterService {
             String arrayLiteral = "ARRAY[" + cleanValues.stream()
                 .map(val -> "'" + val + "'")
                 .collect(Collectors.joining(",")) + "]::" + typeConversionService.getColumnType(column, tableInfo) + "[]";
-            return column + " " + operator + " " + arrayLiteral;
+            return q(column) + " " + operator + " " + arrayLiteral;
         }
         return null;
     }
@@ -558,7 +514,7 @@ public class FilterService {
                 cleanValues.add(val.trim().replace("\"", ""));
             }
             params.add(cleanValues.toArray(new String[0]));
-            return column + " @> ?";
+            return q(column) + " @> ?";
         }
         return null;
     }

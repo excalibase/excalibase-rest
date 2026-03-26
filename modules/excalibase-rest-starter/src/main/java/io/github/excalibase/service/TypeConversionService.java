@@ -196,6 +196,17 @@ public class TypeConversionService {
                     return value;
                 }
             } else {
+                // For character/text types, always return as string without numeric conversion
+                if (columnType.contains("char") || columnType.contains("text") || columnType.equals("varchar")) {
+                    return value;
+                }
+                // Unknown type (possibly a domain type) — try numeric conversion
+                // if the value looks like a number, to handle domains over int/numeric
+                if (value.matches("-?\\d+")) {
+                    try { return Integer.parseInt(value); } catch (NumberFormatException ignored) {}
+                } else if (value.matches("-?\\d+\\.\\d+")) {
+                    try { return Double.parseDouble(value); } catch (NumberFormatException ignored) {}
+                }
                 // Default to string for varchar, text, json, etc.
                 return value;
             }
@@ -289,8 +300,13 @@ public class TypeConversionService {
             else if (columnType.equals("timetz") || columnType.equals("time with time zone")) {
                 return "?";
             }
+            // Domain types and other custom types — cast explicitly so PostgreSQL
+            // can resolve the domain from a plain literal (e.g. dvdrental.year from int4)
+            else if (columnType.contains(".")) {
+                return "?::" + columnType;
+            }
         }
-        
+
         return "?";
     }
     

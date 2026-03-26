@@ -116,7 +116,14 @@ public class SelectField {
      * - JSON path+alias  → "data->>key AS \"city\""
      */
     public String toSqlExpression() {
-        StringBuilder sb = new StringBuilder(name);
+        // Quote column name if it's a simple identifier (not JSON path, not aggregate)
+        String sqlName;
+        if (isJsonPath() || name.contains("(") || name.contains("->")) {
+            sqlName = name;
+        } else {
+            sqlName = "\"" + name + "\"";
+        }
+        StringBuilder sb = new StringBuilder(sqlName);
         if (cast != null) {
             sb.append("::").append(cast);
         }

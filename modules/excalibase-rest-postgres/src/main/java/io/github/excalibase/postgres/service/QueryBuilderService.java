@@ -25,6 +25,13 @@ public class QueryBuilderService implements IQueryBuilderService {
     }
 
     /**
+     * Quote a SQL identifier with double quotes to handle spaces and reserved words.
+     */
+    private static String q(String identifier) {
+        return "\"" + identifier + "\"";
+    }
+
+    /**
      * Parse SQL-style order parameter: order=age.desc,height.asc
      */
     public List<String> parseOrderBy(String order, TableInfo tableInfo) {
@@ -32,19 +39,19 @@ public class QueryBuilderService implements IQueryBuilderService {
         Set<String> validColumns = tableInfo.getColumns().stream()
             .map(ColumnInfo::getName)
             .collect(Collectors.toSet());
-        
+
         String[] orderParts = order.split(",");
         for (String part : orderParts) {
             part = part.trim();
-            
+
             String column;
             String direction = "ASC";
             String nullsOrder = "";
-            
+
             if (part.contains(".")) {
                 String[] dotParts = part.split("\\.");
                 column = dotParts[0];
-                
+
                 for (int i = 1; i < dotParts.length; i++) {
                     String modifier = dotParts[i].toLowerCase();
                     if (modifier.equals("asc") || modifier.equals("desc")) {
@@ -58,12 +65,12 @@ public class QueryBuilderService implements IQueryBuilderService {
             } else {
                 column = part;
             }
-            
+
             if (!validColumns.contains(column)) {
                 throw new IllegalArgumentException("Invalid column for ordering: " + column);
             }
-            
-            orderClauses.add(column + " " + direction + nullsOrder);
+
+            orderClauses.add(q(column) + " " + direction + nullsOrder);
         }
         
         return orderClauses;
@@ -85,8 +92,8 @@ public class QueryBuilderService implements IQueryBuilderService {
      * Build INSERT query with proper type casting
      */
     public String buildInsertQuery(String tableName, List<String> columns, TableInfo tableInfo) {
-        String columnList = String.join(", ", columns);
-        
+        String columnList = columns.stream().map(QueryBuilderService::q).collect(Collectors.joining(", "));
+
         List<String> placeholderList = new ArrayList<>();
         for (String columnName : columns) {
             placeholderList.add(typeConversionService.buildPlaceholderWithCast(columnName, tableInfo));
@@ -100,17 +107,17 @@ public class QueryBuilderService implements IQueryBuilderService {
      * Build bulk INSERT query with proper type casting
      */
     public String buildBulkInsertQuery(String tableName, List<String> columns, int recordCount, TableInfo tableInfo) {
-        String columnList = String.join(", ", columns);
+        String columnList = columns.stream().map(QueryBuilderService::q).collect(Collectors.joining(", "));
         String placeholderRow = "(" + columns.stream()
             .map(c -> typeConversionService.buildPlaceholderWithCast(c, tableInfo))
             .collect(Collectors.joining(", ")) + ")";
-        
+
         List<String> valuePlaceholders = new ArrayList<>();
         for (int i = 0; i < recordCount; i++) {
             valuePlaceholders.add(placeholderRow);
         }
-        
-        return "INSERT INTO " + tableName + " (" + columnList + ") VALUES " + 
+
+        return "INSERT INTO " + tableName + " (" + columnList + ") VALUES " +
                String.join(", ", valuePlaceholders) + " RETURNING *";
     }
 
@@ -120,12 +127,12 @@ public class QueryBuilderService implements IQueryBuilderService {
     public String buildUpdateQuery(String tableName, List<String> updateColumns, List<String> whereConditions, TableInfo tableInfo) {
         List<String> setParts = new ArrayList<>();
         for (String column : updateColumns) {
-            setParts.add(column + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo));
+            setParts.add(q(column) + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo));
         }
-        
+
         String whereClause = String.join(" AND ", whereConditions);
-        
-        return "UPDATE " + tableName + " SET " + String.join(", ", setParts) + 
+
+        return "UPDATE " + tableName + " SET " + String.join(", ", setParts) +
                " WHERE " + whereClause + " RETURNING *";
     }
 
@@ -140,23 +147,23 @@ public class QueryBuilderService implements IQueryBuilderService {
     /**
      * Build UPSERT query with conflict resolution
      */
-    public String buildUpsertQuery(String tableName, List<String> columns, List<String> primaryKeyColumns, 
+    public String buildUpsertQuery(String tableName, List<String> columns, List<String> primaryKeyColumns,
                                    List<String> updateColumns, TableInfo tableInfo) {
-        String columnListStr = String.join(", ", columns);
+        String columnListStr = columns.stream().map(QueryBuilderService::q).collect(Collectors.joining(", "));
         String placeholders = columns.stream()
             .map(c -> typeConversionService.buildPlaceholderWithCast(c, tableInfo))
             .collect(Collectors.joining(", "));
-        
-        String conflictColumns = String.join(", ", primaryKeyColumns);
-        
+
+        String conflictColumns = primaryKeyColumns.stream().map(QueryBuilderService::q).collect(Collectors.joining(", "));
+
         StringBuilder sqlBuilder = new StringBuilder();
         sqlBuilder.append("INSERT INTO ").append(tableName)
                   .append(" (").append(columnListStr).append(") VALUES (")
                   .append(placeholders).append(")");
-        
+
         if (!updateColumns.isEmpty()) {
             String updateSet = updateColumns.stream()
-                .map(col -> col + " = EXCLUDED." + col)
+                .map(col -> q(col) + " = EXCLUDED." + q(col))
                 .collect(Collectors.joining(", "));
             sqlBuilder.append(" ON CONFLICT (").append(conflictColumns).append(")")
                       .append(" DO UPDATE SET ").append(updateSet);
@@ -164,7 +171,7 @@ public class QueryBuilderService implements IQueryBuilderService {
             sqlBuilder.append(" ON CONFLICT (").append(conflictColumns).append(")")
                       .append(" DO NOTHING");
         }
-        
+
         sqlBuilder.append(" RETURNING *");
         return sqlBuilder.toString();
     }
@@ -174,26 +181,26 @@ public class QueryBuilderService implements IQueryBuilderService {
      */
     public String buildBulkUpsertQuery(String tableName, List<String> columns, List<String> primaryKeyColumns,
                                        List<String> updateColumns, int recordCount, TableInfo tableInfo) {
-        String columnListStr = String.join(", ", columns);
+        String columnListStr = columns.stream().map(QueryBuilderService::q).collect(Collectors.joining(", "));
         String placeholderRow = "(" + columns.stream()
             .map(c -> typeConversionService.buildPlaceholderWithCast(c, tableInfo))
             .collect(Collectors.joining(", ")) + ")";
-        
+
         List<String> valuePlaceholders = new ArrayList<>();
         for (int i = 0; i < recordCount; i++) {
             valuePlaceholders.add(placeholderRow);
         }
-        
-        String conflictColumns = String.join(", ", primaryKeyColumns);
-        
+
+        String conflictColumns = primaryKeyColumns.stream().map(QueryBuilderService::q).collect(Collectors.joining(", "));
+
         StringBuilder sqlBuilder = new StringBuilder();
         sqlBuilder.append("INSERT INTO ").append(tableName)
                   .append(" (").append(columnListStr).append(") VALUES ")
                   .append(String.join(", ", valuePlaceholders));
-        
+
         if (!updateColumns.isEmpty()) {
             String updateSet = updateColumns.stream()
-                .map(col -> col + " = EXCLUDED." + col)
+                .map(col -> q(col) + " = EXCLUDED." + q(col))
                 .collect(Collectors.joining(", "));
             sqlBuilder.append(" ON CONFLICT (").append(conflictColumns).append(")")
                       .append(" DO UPDATE SET ").append(updateSet);
@@ -201,7 +208,7 @@ public class QueryBuilderService implements IQueryBuilderService {
             sqlBuilder.append(" ON CONFLICT (").append(conflictColumns).append(")")
                       .append(" DO NOTHING");
         }
-        
+
         sqlBuilder.append(" RETURNING *");
         return sqlBuilder.toString();
     }
@@ -254,7 +261,7 @@ public class QueryBuilderService implements IQueryBuilderService {
         List<String> whereConditions = new ArrayList<>();
         
         for (ColumnInfo pkColumn : primaryKeyColumns) {
-            whereConditions.add(pkColumn.getName() + " = " + 
+            whereConditions.add(q(pkColumn.getName()) + " = " +
                 typeConversionService.buildPlaceholderWithCast(pkColumn.getName(), tableInfo));
         }
         

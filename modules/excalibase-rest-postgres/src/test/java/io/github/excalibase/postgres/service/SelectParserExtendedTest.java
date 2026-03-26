@@ -55,7 +55,7 @@ class SelectParserExtendedTest {
         List<SelectField> fields = selectParserService.parseSelect("fullName:name");
 
         String sql = fields.get(0).toSqlExpression();
-        assertEquals("name AS \"fullName\"", sql);
+        assertEquals("\"name\" AS \"fullName\"", sql);
     }
 
     @Test
@@ -63,7 +63,7 @@ class SelectParserExtendedTest {
         List<SelectField> fields = selectParserService.parseSelect("name");
 
         String sql = fields.get(0).toSqlExpression();
-        assertEquals("name", sql);
+        assertEquals("\"name\"", sql);
     }
 
     // ─── Type casting: col::type ──────────────────────────────────────────────
@@ -83,7 +83,7 @@ class SelectParserExtendedTest {
         List<SelectField> fields = selectParserService.parseSelect("age::text");
 
         String sql = fields.get(0).toSqlExpression();
-        assertEquals("age::text", sql);
+        assertEquals("\"age\"::text", sql);
     }
 
     @Test
@@ -103,7 +103,7 @@ class SelectParserExtendedTest {
         List<SelectField> fields = selectParserService.parseSelect("ageStr:age::text");
 
         String sql = fields.get(0).toSqlExpression();
-        assertEquals("age::text AS \"ageStr\"", sql);
+        assertEquals("\"age\"::text AS \"ageStr\"", sql);
     }
 
     // ─── JSON path access: col->>key, col->key ────────────────────────────────

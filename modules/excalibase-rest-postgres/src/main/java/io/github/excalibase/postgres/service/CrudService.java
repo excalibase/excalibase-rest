@@ -382,7 +382,7 @@ public class CrudService implements ICrudService {
         // Build SET clause
         List<String> setParts = new ArrayList<>();
         for (Map.Entry<String, Object> entry : updateData.entrySet()) {
-            setParts.add(entry.getKey() + " = " + typeConversionService.buildPlaceholderWithCast(entry.getKey(), tableInfo));
+            setParts.add("\"" + entry.getKey() + "\" = " + typeConversionService.buildPlaceholderWithCast(entry.getKey(), tableInfo));
             params.add(typeConversionService.convertValueToColumnType(entry.getKey(), entry.getValue(), tableInfo));
         }
         

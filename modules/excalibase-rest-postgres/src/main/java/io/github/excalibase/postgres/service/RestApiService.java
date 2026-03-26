@@ -142,7 +142,7 @@ public class RestApiService {
         if (orderBy != null && !orderBy.trim().isEmpty()) {
             validationService.validateOrderByColumn(orderBy, tableInfo);
             String direction = orderDirection.equalsIgnoreCase("desc") ? "DESC" : "ASC";
-            query.append(" ORDER BY ").append(orderBy).append(" ").append(direction);
+            query.append(" ORDER BY \"").append(orderBy).append("\" ").append(direction);
         }
 
         // Support "order" parameter for ordering
@@ -351,19 +351,19 @@ public class RestApiService {
         if (after != null) {
             String decodedCursor = queryBuilderService.decodeCursor(after);
             if (forward) {
-                conditions.add(orderBy + " > ?");
+                conditions.add("\"" + orderBy + "\" > ?");
             } else {
-                conditions.add(orderBy + " < ?");
+                conditions.add("\"" + orderBy + "\" < ?");
             }
             params.add(typeConversionService.convertValueToColumnType(orderBy, decodedCursor, tableInfo));
         }
-        
+
         if (before != null) {
             String decodedCursor = queryBuilderService.decodeCursor(before);
             if (forward) {
-                conditions.add(orderBy + " < ?");
+                conditions.add("\"" + orderBy + "\" < ?");
             } else {
-                conditions.add(orderBy + " > ?");
+                conditions.add("\"" + orderBy + "\" > ?");
             }
             params.add(typeConversionService.convertValueToColumnType(orderBy, decodedCursor, tableInfo));
         }
@@ -377,8 +377,8 @@ public class RestApiService {
             (orderDirection.equalsIgnoreCase("desc") ? "DESC" : "ASC") :
             (orderDirection.equalsIgnoreCase("desc") ? "ASC" : "DESC"); // Reverse for backward pagination
             
-        query.append(" ORDER BY ").append(orderBy).append(" ").append(direction);
-        
+        query.append(" ORDER BY \"").append(orderBy).append("\" ").append(direction);
+
         // LIMIT
         query.append(" LIMIT ").append(limit + 1); // Fetch one extra to check hasNextPage/hasPreviousPage
         
