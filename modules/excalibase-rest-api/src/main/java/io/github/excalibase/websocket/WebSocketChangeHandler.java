@@ -2,6 +2,7 @@ package io.github.excalibase.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.excalibase.model.CDCEvent;
+import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.NatsCDCService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,13 +36,15 @@ public class WebSocketChangeHandler extends TextWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(WebSocketChangeHandler.class);
 
     private final NatsCDCService natsCDCService;
+    private final IValidationService validationService;
     private final ObjectMapper objectMapper;
 
     // sessionId → Disposable (so we can cancel on disconnect)
     private final Map<String, Disposable> sessionSubscriptions = new ConcurrentHashMap<>();
 
-    public WebSocketChangeHandler(NatsCDCService natsCDCService, ObjectMapper objectMapper) {
+    public WebSocketChangeHandler(NatsCDCService natsCDCService, IValidationService validationService, ObjectMapper objectMapper) {
         this.natsCDCService = natsCDCService;
+        this.validationService = validationService;
         this.objectMapper = objectMapper;
     }
 
@@ -54,6 +57,7 @@ public class WebSocketChangeHandler extends TextWebSocketHandler {
         }
 
         String table = extractTable(session.getUri());
+        validationService.getValidatedTableInfo(table);
         log.debug("WS client connected to table '{}' (session={})", table, session.getId());
 
         Disposable disposable = natsCDCService.getTableEventStream(table)

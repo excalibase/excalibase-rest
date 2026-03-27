@@ -32,8 +32,9 @@ class FilterServiceTest {
 
     @BeforeEach
     void setUp() {
-        typeConversionService = new TypeConversionService(validationService);
-        filterService = new FilterService(validationService, typeConversionService);
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        typeConversionService = new TypeConversionService(validationService, objectMapper);
+        filterService = new FilterService(validationService, typeConversionService, objectMapper);
 
         // Build a table with several typed columns
         List<ColumnInfo> columns = List.of(
@@ -379,7 +380,8 @@ class FilterServiceTest {
         List<Object> p = new ArrayList<>();
         List<String> conditions = filterService.parseFilters(params("meta", "haskeys.[\"k1\",\"k2\"]"), p, tableInfo);
         assertTrue(conditions.get(0).contains("?&"));
-        assertTrue(conditions.get(0).contains("ARRAY"));
+        assertTrue(conditions.get(0).contains("?::text[]"));
+        assertEquals(1, p.size()); // parameterized array
     }
 
     @Test
@@ -387,6 +389,7 @@ class FilterServiceTest {
         List<Object> p = new ArrayList<>();
         List<String> conditions = filterService.parseFilters(params("meta", "hasanykeys.[\"k1\"]"), p, tableInfo);
         assertTrue(conditions.get(0).contains("?|"));
+        assertEquals(1, p.size());
     }
 
     @Test

@@ -2,6 +2,7 @@ package io.github.excalibase.postgres.service;
 
 import io.github.excalibase.model.ColumnInfo;
 import io.github.excalibase.model.TableInfo;
+import io.github.excalibase.service.FilterService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -16,12 +17,13 @@ import java.util.stream.Collectors;
  * Supports both inline aggregates and dedicated aggregate endpoints.
  */
 @Service
-public class AggregationService {
+public class AggregationService implements io.github.excalibase.service.IAggregationService {
     private static final Logger log = LoggerFactory.getLogger(AggregationService.class);
 
     private final JdbcTemplate jdbcTemplate;
     private final DatabaseSchemaService schemaService;
     private final ValidationService validationService;
+    private final FilterService filterService;
 
     // Supported aggregate functions
     private static final Set<String> AGGREGATE_FUNCTIONS = Set.of("count", "sum", "avg", "min", "max");
@@ -52,10 +54,12 @@ public class AggregationService {
 
     public AggregationService(JdbcTemplate jdbcTemplate,
                               DatabaseSchemaService schemaService,
-                              ValidationService validationService) {
+                              ValidationService validationService,
+                              FilterService filterService) {
         this.jdbcTemplate = jdbcTemplate;
         this.schemaService = schemaService;
         this.validationService = validationService;
+        this.filterService = filterService;
     }
 
     /**
@@ -322,10 +326,22 @@ public class AggregationService {
                                    MultiValueMap<String, String> filters,
                                    StringBuilder whereClause,
                                    List<Object> params) {
-        // This is a simplified version - in production, integrate with existing filter parsing
-        if (filters != null && !filters.isEmpty()) {
-            whereClause.append(" WHERE 1=1");
-            // TODO: Integrate with existing filter parsing logic from RestApiService
+        if (filters == null || filters.isEmpty()) {
+            return;
+        }
+        // Strip control params before passing to filter service
+        MultiValueMap<String, String> dataFilters = new org.springframework.util.LinkedMultiValueMap<>();
+        filters.forEach((key, values) -> {
+            if (!io.github.excalibase.constant.OperatorConstants.isControlParameter(key)) {
+                dataFilters.put(key, values);
+            }
+        });
+        if (dataFilters.isEmpty()) {
+            return;
+        }
+        List<String> conditions = filterService.parseFilters(dataFilters, params, tableInfo);
+        if (!conditions.isEmpty()) {
+            whereClause.append(" WHERE ").append(String.join(" AND ", conditions));
         }
     }
 

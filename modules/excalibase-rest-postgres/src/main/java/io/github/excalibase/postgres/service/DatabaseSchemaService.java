@@ -18,10 +18,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 
 @Service
-public class DatabaseSchemaService {
+public class DatabaseSchemaService implements io.github.excalibase.service.IDatabaseSchemaService {
 
     private static final Logger log = LoggerFactory.getLogger(DatabaseSchemaService.class);
     
@@ -29,11 +29,9 @@ public class DatabaseSchemaService {
     private final String allowedSchema;
     private final DatabaseType databaseType;
     
-    // Cache for schema information
-    private final Map<String, Map<String, TableInfo>> schemaCache = new ConcurrentHashMap<>();
-    private long lastCacheUpdate = 0;
-    private static final long CACHE_TTL_MS = 300_000; // 5 minutes
-    
+    // Schema loaded once at startup, invalidated by CDC DDL events
+    private volatile Map<String, TableInfo> schemaCache;
+
     public DatabaseSchemaService(JdbcTemplate jdbcTemplate,
                                  @Value("${app.allowed-schema:public}") String allowedSchema,
                                  @Value("${app.database-type:postgres}") String databaseTypeStr) {
@@ -43,23 +41,21 @@ public class DatabaseSchemaService {
     }
 
     /**
-     * Get all table schemas with caching
+     * Get all table schemas. Loaded once on first access, then invalidated
+     * only by CDC DDL events via {@link #clearCache()}.
      */
     public Map<String, TableInfo> getTableSchema() {
-        long currentTime = System.currentTimeMillis();
-        
-        // Check cache first
-        if (schemaCache.containsKey(allowedSchema) && 
-            (currentTime - lastCacheUpdate) < CACHE_TTL_MS) {
-            return schemaCache.get(allowedSchema);
+        Map<String, TableInfo> cached = schemaCache;
+        if (cached != null) {
+            return cached;
         }
-        
-        // Refresh cache
-        Map<String, TableInfo> schema = reflectSchema();
-        schemaCache.put(allowedSchema, schema);
-        lastCacheUpdate = currentTime;
-        
-        return schema;
+        synchronized (this) {
+            if (schemaCache != null) {
+                return schemaCache;
+            }
+            schemaCache = reflectSchema();
+            return schemaCache;
+        }
     }
 
     /**
@@ -67,10 +63,14 @@ public class DatabaseSchemaService {
      */
     private Map<String, TableInfo> reflectSchema() {
         log.debug("Reflecting schema for database type: {} and schema: {}", databaseType, allowedSchema);
-        
+
         Map<String, TableInfo> tables = new HashMap<>();
-        
+
         try {
+            // Pre-load all enum and composite type names (avoids N+1 per column)
+            cachedEnumTypes = loadEnumTypeNames();
+            cachedCompositeTypes = loadCompositeTypeNames();
+
             // Get all tables in the schema
             List<String> tableNames = getTableNames();
             
@@ -83,8 +83,14 @@ public class DatabaseSchemaService {
                 
                 // Check if it's a view
                 boolean isView = isTableView(tableName);
-                
+
                 TableInfo tableInfo = new TableInfo(tableName, columns, foreignKeys, isView);
+
+                // Load unique constraints (non-PK)
+                if (!isView) {
+                    tableInfo.setUniqueConstraints(getUniqueConstraints(tableName));
+                }
+
                 tables.put(tableName, tableInfo);
             }
             
@@ -299,12 +305,39 @@ public class DatabaseSchemaService {
     }
 
     /**
+     * Get unique constraints (non-PK) for a table.
+     * Returns list of column-name lists (each inner list = one unique constraint).
+     */
+    private List<List<String>> getUniqueConstraints(String tableName) {
+        String sql = """
+            SELECT c.conname, array_agg(a.attname ORDER BY k.n) AS columns
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace ns ON ns.oid = t.relnamespace
+            CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(col, n)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.col
+            WHERE c.contype = 'u' AND ns.nspname = ? AND t.relname = ?
+            GROUP BY c.conname
+            """;
+        try {
+            return jdbcTemplate.query(sql, (rs, rowNum) -> {
+                java.sql.Array arr = rs.getArray("columns");
+                if (arr == null) return List.<String>of();
+                String[] cols = (String[]) arr.getArray();
+                return List.of(cols);
+            }, allowedSchema, tableName);
+        } catch (Exception e) {
+            log.warn("Failed to load unique constraints for {}: {}", tableName, e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
      * Clear the schema cache (useful for testing or when schema changes)
      */
-    public void clearCache() {
-        schemaCache.clear();
-        lastCacheUpdate = 0;
-        log.info("Schema cache cleared");
+    public synchronized void clearCache() {
+        schemaCache = null;
+        log.info("Schema cache cleared — will reload on next request");
     }
 
     /**
@@ -318,16 +351,10 @@ public class DatabaseSchemaService {
      * Get schema cache statistics
      */
     public Map<String, Object> getSchemaCacheStats() {
-        long currentTime = System.currentTimeMillis();
-        long cacheAge = lastCacheUpdate > 0 ? currentTime - lastCacheUpdate : 0;
-        boolean isCacheValid = schemaCache.containsKey(allowedSchema) && cacheAge < CACHE_TTL_MS;
-
+        boolean loaded = schemaCache != null;
         return Map.of(
-            "totalEntries", schemaCache.size(),
-            "validEntries", isCacheValid ? schemaCache.size() : 0,
-            "cacheAgeMs", cacheAge,
-            "ttlMs", CACHE_TTL_MS,
-            "isValid", isCacheValid
+            "loaded", loaded,
+            "tableCount", loaded ? schemaCache.size() : 0
         );
     }
 
@@ -348,6 +375,10 @@ public class DatabaseSchemaService {
     /**
      * Enhance PostgreSQL type detection for custom types (enums, composites, networks, arrays)
      */
+    // Pre-loaded during reflectSchema() — avoids N+1 per column
+    private Set<String> cachedEnumTypes = Set.of();
+    private Set<String> cachedCompositeTypes = Set.of();
+
     private String enhancePostgreSQLType(String finalType, String dataType) {
         if (databaseType != DatabaseType.POSTGRES) {
             return finalType;
@@ -365,12 +396,12 @@ public class DatabaseSchemaService {
             
             // Handle non-array types - check if it's a custom enum type (but not for arrays)
             String baseType = finalType;
-            if (isEnumType(baseType)) {
+            if (cachedEnumTypes.contains(baseType)) {
                 return ColumnTypeConstant.POSTGRES_ENUM + ":" + baseType;
             }
-            
+
             // Check if it's a composite type (but not for arrays)
-            if (isCompositeType(baseType)) {
+            if (cachedCompositeTypes.contains(baseType)) {
                 return ColumnTypeConstant.POSTGRES_COMPOSITE + ":" + baseType;
             }
             
@@ -390,42 +421,32 @@ public class DatabaseSchemaService {
     }
     
     /**
-     * Check if a type is a PostgreSQL enum
+     * Load all enum type names in one query (replaces per-column isEnumType checks).
      */
-    private boolean isEnumType(String typeName) {
-        String query = """
-            SELECT COUNT(*) > 0
-            FROM pg_type t
-            JOIN pg_enum e ON t.oid = e.enumtypid
-            WHERE t.typname = ?
-            """;
-        
+    private Set<String> loadEnumTypeNames() {
         try {
-            Boolean isEnum = jdbcTemplate.queryForObject(query, Boolean.class, typeName);
-            return isEnum != null && isEnum;
+            List<String> names = jdbcTemplate.queryForList(
+                    "SELECT DISTINCT t.typname FROM pg_type t JOIN pg_enum e ON t.oid = e.enumtypid",
+                    String.class);
+            return new java.util.HashSet<>(names);
         } catch (Exception e) {
-            log.debug("Error checking if '{}' is enum type: {}", typeName, e.getMessage());
-            return false;
+            log.warn("Failed to load enum type names: {}", e.getMessage());
+            return Set.of();
         }
     }
-    
+
     /**
-     * Check if a type is a PostgreSQL composite type
+     * Load all composite type names in one query (replaces per-column isCompositeType checks).
      */
-    private boolean isCompositeType(String typeName) {
-        String query = """
-            SELECT COUNT(*) > 0
-            FROM pg_type t
-            WHERE t.typname = ?
-            AND t.typtype = 'c'
-            """;
-        
+    private Set<String> loadCompositeTypeNames() {
         try {
-            Boolean isComposite = jdbcTemplate.queryForObject(query, Boolean.class, typeName);
-            return isComposite != null && isComposite;
+            List<String> names = jdbcTemplate.queryForList(
+                    "SELECT typname FROM pg_type WHERE typtype = 'c'",
+                    String.class);
+            return new java.util.HashSet<>(names);
         } catch (Exception e) {
-            log.debug("Error checking if '{}' is composite type: {}", typeName, e.getMessage());
-            return false;
+            log.warn("Failed to load composite type names: {}", e.getMessage());
+            return Set.of();
         }
     }
     

@@ -29,11 +29,14 @@ class AggregationServiceTest {
     @Mock(lenient = true)
     private ValidationService validationService;
 
+    @Mock(lenient = true)
+    private io.github.excalibase.service.FilterService filterService;
+
     private AggregationService aggregationService;
 
     @BeforeEach
     void setup() {
-        aggregationService = new AggregationService(jdbcTemplate, schemaService, validationService);
+        aggregationService = new AggregationService(jdbcTemplate, schemaService, validationService, filterService);
 
         // Mock permission checks
         doNothing().when(validationService).validateTablePermission(anyString(), anyString());
@@ -607,5 +610,28 @@ class AggregationServiceTest {
 
         tableInfo.setColumns(columns);
         return tableInfo;
+    }
+
+    @Test
+    void shouldApplyFiltersToAggregateQuery() {
+        // Given: a table with filters applied
+        TableInfo tableInfo = createOrdersTableInfo();
+        when(schemaService.getTableSchema()).thenReturn(Map.of("orders", tableInfo));
+        when(jdbcTemplate.queryForObject(anyString(), any(Object[].class), eq(Integer.class))).thenReturn(42);
+
+        // Mock FilterService to return a condition for the filter
+        when(filterService.parseFilters(any(), any(), any()))
+                .thenReturn(List.of("\"status\" = ?"));
+
+        MultiValueMap<String, String> filters = new LinkedMultiValueMap<>();
+        filters.add("status", "eq.shipped");
+
+        // When: getting count with filters
+        Map<String, Object> result = aggregationService.getAggregates("orders", filters, List.of("count"), null);
+
+        // Then: the SQL should contain a WHERE clause with the filter condition
+        verify(jdbcTemplate).queryForObject(argThat(sql ->
+                sql.contains("WHERE") && sql.contains("\"status\" = ?")
+        ), any(Object[].class), eq(Integer.class));
     }
 }

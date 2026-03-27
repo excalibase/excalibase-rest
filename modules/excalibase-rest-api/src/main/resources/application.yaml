@@ -101,8 +101,13 @@ app:
     user-id-extractor-type: header  # Extractor type: "header", "jwt", "oauth2", etc.
     user-id-header: X-User-Id       # Header name for user ID when using header extractor
   
+  # Query compiler: compile everything into a single SQL statement
+  # Set to false to use the legacy multi-query approach
+  # query.use-sql-compiler is placed under app.query alongside complexity settings
+
   # Query complexity limits
   query:
+    use-sql-compiler: true
     max-complexity-score: 1000
     max-depth: 10
     max-breadth: 50

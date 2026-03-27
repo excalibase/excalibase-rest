@@ -15,32 +15,35 @@ Excalibase REST is a powerful Spring Boot application that **automatically gener
 - **📊 Rich Querying**: Advanced filtering, sorting, and pagination
 - **🗓️ Enhanced Date/Time Filtering**: Comprehensive date and timestamp operations
 - **🔍 Advanced Filter Types**: String, numeric, boolean filters with operators like eq, neq, gt, gte, lt, lte, in, notin, like, ilike
+- **🔎 Full-Text Search**: FTS operators (fts, plfts, phfts, wfts) with configurable language
 - **🎯 Custom PostgreSQL Types**: Full support for custom enum and composite types
-- **📄 Enhanced PostgreSQL Data Types**: JSON/JSONB with object support, arrays with proper mapping, network types (INET, CIDR), datetime, and XML support  
-- **🔗 Relationship Expansion**: Automatic foreign key relationship handling with expand parameters
+- **📄 Enhanced PostgreSQL Data Types**: JSON/JSONB with object support, arrays with proper mapping, network types (INET, CIDR), datetime, and XML support
+- **🔗 Relationship Expansion**: Parameterized and nested expand with single-CTE compilation
 - **🛠️ CRUD Operations**: Full create, read, update, delete support with **composite key support**
 - **🔑 Composite Primary Keys**: Complete support for tables with multi-column primary keys
 - **🔄 Composite Foreign Keys**: Seamless handling of multi-column foreign key relationships
 - **📄 Offset & Cursor Pagination**: Both traditional offset-based and GraphQL-style cursor pagination
-- **⚡ N+1 Prevention**: Efficient relationship loading
+- **⚡ N+1 Prevention**: Single-CTE query compilation with jsonb_agg pattern
 - **🔧 OR Operations**: Complex logical conditions with SQL-style syntax
 - **🛡️ Security Controls**: Input validation, SQL injection prevention, and request limiting
 - **📋 Bulk Operations**: Transaction-safe bulk create, update, and delete operations via array input
 - **🐳 Docker Support**: Container images with Docker Compose setup
 - **📖 OpenAPI 3.0**: Auto-generated API documentation with Swagger UI compatibility (JSON/YAML formats)
 - **🔍 Schema Introspection**: Dynamic PostgreSQL schema discovery with type information endpoints
-- **⚡ Query Complexity Analysis**: Performance monitoring and query complexity limits
-- **💾 Schema Caching**: Performance optimization with configurable TTL-based caching
+- **💾 Schema Caching**: CDC DDL-invalidated schema cache (no polling)
 - **🔄 CI/CD Pipeline**: GitHub Actions integration with automated testing
+- **🧩 3-Module Architecture**: Starter (interfaces) + Postgres (implementations) + API (controllers)
 
 - **📡 Real-time CDC Subscriptions**: Server-Sent Events (SSE) and WebSocket change streams via NATS JetStream
 - **🔍 Prefer Header**: `Prefer: count=exact` for optional total counts
-- **👤 JWT User ID Extraction**: Automatic user context from JWT tokens
 - **📊 Observability Stack**: OpenTelemetry traces/metrics, Grafana, Prometheus, Tempo, Loki
 - **⚡ Virtual Threads**: Java 21 virtual threads for high-concurrency workloads
+- **🔀 RPC Functions**: Call PostgreSQL functions via dedicated RPC endpoints
+- **📊 Aggregations**: Server-side aggregation queries with filter support
 
 ### 🚧 Planned Features
 
+- [ ] **Response Caching** - HTTP-level and query result caching
 - [ ] **MySQL Support** - Complete MySQL database integration
 - [ ] **Oracle Support** - Add Oracle database compatibility
 - [ ] **SQL Server Support** - Microsoft SQL Server implementation
@@ -189,19 +192,34 @@ curl "http://localhost:20000/api/v1/users?or=(name.like.John*,email.like.*@compa
 
 # JSON filtering (for JSONB columns)
 curl "http://localhost:20000/api/v1/users?metadata=haskey.preferences"
+
+# Full-text search (uses to_tsvector/to_tsquery)
+curl "http://localhost:20000/api/v1/posts?body=fts.postgresql"
+
+# Plain full-text search
+curl "http://localhost:20000/api/v1/posts?body=plfts.search+terms"
+
+# Phrase full-text search
+curl "http://localhost:20000/api/v1/posts?body=phfts.exact+phrase"
+
+# Websearch-style full-text search
+curl "http://localhost:20000/api/v1/posts?body=wfts.search+terms+-excluded"
 ```
 
 ### Relationship Expansion
 
 ```bash
-# Expand related data
+# Expand related data (many-to-one)
 curl "http://localhost:20000/api/v1/orders?expand=customer"
 
-# Expand with parameters
-curl "http://localhost:20000/api/v1/customers?expand=orders(limit:5,select:total,status)"
+# Expand with parameters (limit, select, order)
+curl "http://localhost:20000/api/v1/customers?expand=orders(limit:5,select:id,order:total.desc)"
 
 # Multiple expansions
 curl "http://localhost:20000/api/v1/orders?expand=customer,items"
+
+# Nested expand (multi-level traversal)
+curl "http://localhost:20000/api/v1/customers?expand=orders.order_items"
 ```
 
 ### Field Selection and Sorting
@@ -317,12 +335,6 @@ curl "http://localhost:20000/api/v1/openapi.yaml"
 
 # Get custom PostgreSQL type information
 curl "http://localhost:20000/api/v1/types/my_enum_type"
-
-# Query complexity limits and analysis
-curl "http://localhost:20000/api/v1/complexity/limits"
-curl -X POST "http://localhost:20000/api/v1/complexity/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{"table": "users", "params": {"status": "active"}, "limit": 100, "expand": "orders"}'
 ```
 
 ## 🔧 Configuration
@@ -339,9 +351,6 @@ app:
   max-page-size: 1000          # Maximum pagination limit
   default-page-size: 100       # Default pagination size
 
-  # Cache configuration
-  schema-cache-ttl-seconds: 300 # Schema cache TTL (5 minutes)
-
   # CORS configuration
   cors:
     enabled: true
@@ -357,14 +366,6 @@ app:
     enable-table-name-validation: true
     enable-column-name-validation: true
     max-request-body-size: 1048576 # 1MB
-    max-query-complexity: 100
-
-  # Query complexity limits
-  query:
-    max-complexity-score: 1000
-    max-depth: 10
-    max-breadth: 50
-    complexity-analysis-enabled: true
 
 spring:
   datasource:
@@ -405,13 +406,6 @@ export SPRING_DATASOURCE_PASSWORD=mypass
 export APP_ALLOWED_SCHEMA=public
 export APP_MAX_PAGE_SIZE=1000
 export APP_DEFAULT_PAGE_SIZE=100
-export APP_SCHEMA_CACHE_TTL_SECONDS=300
-
-# Query complexity limits
-export APP_QUERY_MAX_COMPLEXITY_SCORE=1000
-export APP_QUERY_MAX_DEPTH=10
-export APP_QUERY_MAX_BREADTH=50
-
 # Security settings
 export APP_SECURITY_MAX_REQUEST_BODY_SIZE=1048576
 ```

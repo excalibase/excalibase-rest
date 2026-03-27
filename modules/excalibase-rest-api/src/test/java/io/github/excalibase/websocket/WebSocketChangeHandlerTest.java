@@ -2,6 +2,7 @@ package io.github.excalibase.websocket;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.excalibase.model.CDCEvent;
+import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.NatsCDCService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,9 @@ class WebSocketChangeHandlerTest {
     @Mock
     private NatsCDCService natsCDCService;
 
+    @Mock(lenient = true)
+    private IValidationService validationService;
+
     @Mock
     private WebSocketSession session;
 
@@ -36,7 +40,7 @@ class WebSocketChangeHandlerTest {
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        handler = new WebSocketChangeHandler(natsCDCService, objectMapper);
+        handler = new WebSocketChangeHandler(natsCDCService, validationService, objectMapper);
         when(session.getId()).thenReturn("session-1");
     }
 

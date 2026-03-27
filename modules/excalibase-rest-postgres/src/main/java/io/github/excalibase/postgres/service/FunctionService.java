@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Supports auto-discovery, auto-embedding, and proven execution patterns.
  */
 @Service
-public class FunctionService {
+public class FunctionService implements io.github.excalibase.service.IFunctionService {
     private static final Logger log = LoggerFactory.getLogger(FunctionService.class);
 
     private final JdbcTemplate jdbcTemplate;
@@ -292,7 +292,8 @@ public class FunctionService {
                                         Object pkValue,
                                         String schema) {
         // GraphQL's execution pattern - pass entire row to function
-        String qualifiedFunctionName = "\"" + schema + "\".\"" + functionName + "\"";
+        String qualifiedFunctionName = io.github.excalibase.util.SqlIdentifier.quoteIdentifier(schema)
+                + "." + io.github.excalibase.util.SqlIdentifier.quoteIdentifier(functionName);
         String qualifiedTableName = "\"" + schema + "\".\"" + tableName + "\"";
 
         String sql = "SELECT " + qualifiedFunctionName + "(row_data.*) as result " +
@@ -318,7 +319,11 @@ public class FunctionService {
      * @return Function result
      */
     public Object executeRpc(String functionName, Map<String, Object> parameters, String schema) {
-        log.info("Executing RPC function: {}.{} with params: {}", schema, functionName, parameters);
+        // Validate identifiers upfront to prevent SQL injection
+        io.github.excalibase.util.SqlIdentifier.quoteIdentifier(functionName);
+        io.github.excalibase.util.SqlIdentifier.quoteIdentifier(schema);
+
+        log.debug("Executing RPC function: {}.{}", schema, functionName);
 
         // Build cache key
         String cacheKey = schema + "." + functionName;
@@ -370,7 +375,8 @@ public class FunctionService {
         log.info("Cache HIT for function: {} ({} parameters)", cacheKey, metadata.parameters.size());
 
         // Build function call SQL
-        String qualifiedFunctionName = "\"" + schema + "\".\"" + functionName + "\"";
+        String qualifiedFunctionName = io.github.excalibase.util.SqlIdentifier.quoteIdentifier(schema)
+                + "." + io.github.excalibase.util.SqlIdentifier.quoteIdentifier(functionName);
         List<FunctionParameter> functionParams = metadata.parameters;
         String returnType = metadata.returnType;
         Integer pronargs = metadata.argCount;
@@ -404,8 +410,8 @@ public class FunctionService {
 
             sql.append(") as result");
 
-            log.info("RPC SQL: {}", sql);
-            log.info("RPC Params: {}", callParams.getValues());
+            log.debug("RPC SQL: {}", sql);
+            log.debug("RPC Params: {}", callParams.getValues());
 
             // Check if function returns a table (SETOF)
             if (returnType.startsWith("SETOF") || isCompositeType(returnType, schema)) {

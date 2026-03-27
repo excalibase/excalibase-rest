@@ -205,7 +205,7 @@ public class OperatorConstants {
         // Relationship expansion
         "expand", "join", "include",
         // Grouping and aggregation
-        "groupBy", "having", "distinct", "aggregate",
+        "groupBy", "having", "distinct", "aggregate", "functions", "columns",
         // Advanced features
         "batch", "query", "variables", "fragment", "alias",
         "transform", "validate", "explain", "format", "stream"

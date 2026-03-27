@@ -33,7 +33,7 @@ class TypeConversionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new TypeConversionService(validationService);
+        service = new TypeConversionService(validationService, new com.fasterxml.jackson.databind.ObjectMapper());
     }
 
     // ── convertValueToColumnType(name, String) — pattern-matching ────────────

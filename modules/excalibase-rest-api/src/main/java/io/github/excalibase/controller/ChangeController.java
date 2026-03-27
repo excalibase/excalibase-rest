@@ -1,6 +1,7 @@
 package io.github.excalibase.controller;
 
 import io.github.excalibase.model.CDCEvent;
+import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.NatsCDCService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,13 +41,17 @@ public class ChangeController {
     private static final Logger log = LoggerFactory.getLogger(ChangeController.class);
 
     private final NatsCDCService natsCDCService;
+    private final IValidationService validationService;
 
-    public ChangeController(NatsCDCService natsCDCService) {
+    public ChangeController(NatsCDCService natsCDCService, IValidationService validationService) {
         this.natsCDCService = natsCDCService;
+        this.validationService = validationService;
     }
 
     @GetMapping(value = "/{table}/changes", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChanges(@PathVariable String table) {
+        validationService.getValidatedTableInfo(table);
+
         if (!natsCDCService.isEnabled()) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "CDC subscriptions not enabled. Set app.nats.enabled=true and " +

@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-public class OpenApiService {
+public class OpenApiService implements io.github.excalibase.service.IOpenApiService {
 
     private final DatabaseSchemaService schemaService;
 

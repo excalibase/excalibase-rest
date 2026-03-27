@@ -431,4 +431,11 @@ class FunctionServiceTest {
         tableInfo.setColumns(columns);
         return tableInfo;
     }
+
+    @Test
+    void executeRpc_rejectsSqlInjectionInFunctionName() {
+        // A function name with SQL injection characters should be rejected
+        assertThrows(IllegalArgumentException.class, () ->
+                functionService.executeRpc("drop_table\"; --", Map.of(), "public"));
+    }
 }

@@ -40,4 +40,8 @@ public interface IValidationService {
     String extractColumnNameFromConstraint(String message, String constraintType);
 
     int getMaxLimit();
+
+    void invalidatePermissionCache();
+
+    Map<String, Object> getPermissionCacheStats();
 }

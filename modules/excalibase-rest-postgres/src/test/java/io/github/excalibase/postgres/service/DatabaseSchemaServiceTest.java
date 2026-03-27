@@ -41,9 +41,7 @@ class DatabaseSchemaServiceTest {
     void shouldReturnCachedSchemaWhenCacheIsValid() throws Exception {
         // Given: a schema is already cached
         TableInfo tableInfo = new TableInfo("test_table", List.of(), List.of());
-        setPrivateField(schemaService, "schemaCache",
-            new ConcurrentHashMap<>(Map.of("test_schema", Map.of("test_table", tableInfo))));
-        setPrivateField(schemaService, "lastCacheUpdate", System.currentTimeMillis());
+        setPrivateField(schemaService, "schemaCache", Map.of("test_table", tableInfo));
 
         // When: getting table schema
         Map<String, TableInfo> result = schemaService.getTableSchema();
@@ -55,13 +53,12 @@ class DatabaseSchemaServiceTest {
     }
 
     @Test
-    void shouldRefreshCacheWhenTTLExpired() throws Exception {
-        // Given: an expired cache
-        setPrivateField(schemaService, "schemaCache",
-            new ConcurrentHashMap<>(Map.of("test_schema", Map.of("old_table", new TableInfo()))));
-        setPrivateField(schemaService, "lastCacheUpdate", System.currentTimeMillis() - 400_000L); // 6+ minutes ago
+    void shouldReloadSchemaAfterCacheCleared() throws Exception {
+        // Given: a populated cache that gets cleared (simulating CDC DDL event)
+        setPrivateField(schemaService, "schemaCache", Map.of("old_table", new TableInfo()));
+        schemaService.clearCache();
 
-        // Mock database responses
+        // Mock database responses for reload
         when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("test_schema")))
                 .thenReturn(List.of("new_table"));
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), eq("test_schema"), eq("new_table"), eq("test_schema"), eq("new_table")))
@@ -71,10 +68,10 @@ class DatabaseSchemaServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), eq("test_schema"), eq("new_table")))
                 .thenReturn(0);
 
-        // When: getting table schema
+        // When: getting table schema after clear
         Map<String, TableInfo> result = schemaService.getTableSchema();
 
-        // Then: should refresh cache with new data
+        // Then: should reload from database
         assertEquals(1, result.size());
         assertTrue(result.containsKey("new_table"));
         assertFalse(result.containsKey("old_table"));
@@ -97,18 +94,14 @@ class DatabaseSchemaServiceTest {
     @Test
     void shouldClearCacheWhenRequested() throws Exception {
         // Given: a populated cache
-        setPrivateField(schemaService, "schemaCache",
-            new ConcurrentHashMap<>(Map.of("test_schema", Map.of("table1", new TableInfo()))));
-        setPrivateField(schemaService, "lastCacheUpdate", System.currentTimeMillis());
+        setPrivateField(schemaService, "schemaCache", Map.of("table1", new TableInfo()));
 
         // When: clearing cache
         schemaService.clearCache();
 
-        // Then: cache should be empty
-        Map<String, Map<String, TableInfo>> schemaCache = getPrivateField(schemaService, "schemaCache");
-        long lastCacheUpdate = getPrivateField(schemaService, "lastCacheUpdate");
-        assertTrue(schemaCache.isEmpty());
-        assertEquals(0L, lastCacheUpdate);
+        // Then: cache should be null (will reload on next access)
+        Map<String, TableInfo> schemaCache = getPrivateField(schemaService, "schemaCache");
+        assertNull(schemaCache);
     }
 
     @Test
@@ -249,9 +242,11 @@ class DatabaseSchemaServiceTest {
 
     @Test
     void shouldDetectEnumTypesCorrectly() throws SQLException {
-        // Given: enum type exists
-        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq("status_enum")))
-                .thenReturn(true);
+        // Given: batch enum type loading returns status_enum
+        when(jdbcTemplate.queryForList(argThat(sql -> sql != null && sql.contains("pg_enum")), eq(String.class)))
+                .thenReturn(List.of("status_enum"));
+        when(jdbcTemplate.queryForList(argThat(sql -> sql != null && sql.contains("typtype = 'c'")), eq(String.class)))
+                .thenReturn(List.of());
 
         // Mock database responses for enum type
         when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("test_schema")))
@@ -286,11 +281,11 @@ class DatabaseSchemaServiceTest {
 
     @Test
     void shouldDetectCompositeTypesCorrectly() throws SQLException {
-        // Given: composite type exists
-        when(jdbcTemplate.queryForObject(argThat(sql -> sql != null && sql.contains("pg_enum")), eq(Boolean.class), eq("address_type")))
-                .thenReturn(false);
-        when(jdbcTemplate.queryForObject(argThat(sql -> sql != null && sql.contains("typtype = 'c'")), eq(Boolean.class), eq("address_type")))
-                .thenReturn(true);
+        // Given: batch type loading returns address_type as composite
+        when(jdbcTemplate.queryForList(argThat(sql -> sql != null && sql.contains("pg_enum")), eq(String.class)))
+                .thenReturn(List.of());
+        when(jdbcTemplate.queryForList(argThat(sql -> sql != null && sql.contains("typtype = 'c'")), eq(String.class)))
+                .thenReturn(List.of("address_type"));
 
         // Mock database responses for composite type
         when(jdbcTemplate.queryForList(anyString(), eq(String.class), eq("test_schema")))

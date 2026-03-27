@@ -3,7 +3,7 @@ package io.github.excalibase.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.excalibase.config.RestApiConfig;
 import io.github.excalibase.model.CDCEvent;
-import io.github.excalibase.postgres.service.DatabaseSchemaService;
+import io.github.excalibase.service.IDatabaseSchemaService;
 import io.nats.client.Message;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,7 +28,7 @@ import static org.mockito.Mockito.*;
 class NatsCDCServiceExtendedTest {
 
     @Mock private RestApiConfig restApiConfig;
-    @Mock private DatabaseSchemaService schemaService;
+    @Mock private IDatabaseSchemaService schemaService;
     @Mock private Message natsMessage;
 
     private NatsCDCService natsCDCService;

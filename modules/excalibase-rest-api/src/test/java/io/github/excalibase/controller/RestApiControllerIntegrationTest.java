@@ -2,7 +2,7 @@ package io.github.excalibase.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.excalibase.postgres.service.DatabaseSchemaService;
+import io.github.excalibase.service.IDatabaseSchemaService;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -49,7 +49,7 @@ class RestApiControllerIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
-    private DatabaseSchemaService databaseSchemaService;
+    private IDatabaseSchemaService databaseSchemaService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 

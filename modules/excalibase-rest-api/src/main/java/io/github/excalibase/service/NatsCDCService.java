@@ -45,7 +45,7 @@ public class NatsCDCService {
 
     private final RestApiConfig restApiConfig;
     private final ObjectMapper objectMapper;
-    private final io.github.excalibase.postgres.service.DatabaseSchemaService schemaService;
+    private final io.github.excalibase.service.IDatabaseSchemaService schemaService;
 
     private Connection natsConnection;
     private Dispatcher dispatcher;
@@ -56,7 +56,7 @@ public class NatsCDCService {
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public NatsCDCService(RestApiConfig restApiConfig, ObjectMapper objectMapper,
-                          io.github.excalibase.postgres.service.DatabaseSchemaService schemaService) {
+                          io.github.excalibase.service.IDatabaseSchemaService schemaService) {
         this.restApiConfig = restApiConfig;
         this.objectMapper = objectMapper;
         this.schemaService = schemaService;

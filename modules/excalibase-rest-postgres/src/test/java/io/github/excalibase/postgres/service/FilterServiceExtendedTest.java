@@ -51,8 +51,9 @@ class FilterServiceExtendedTest {
                 .thenReturn("test_user");
 
         ValidationService validationService = new ValidationService(jdbcTemplate, schemaService);
-        TypeConversionService typeConversionService = new TypeConversionService(validationService);
-        filterService = new FilterService(validationService, typeConversionService);
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        TypeConversionService typeConversionService = new TypeConversionService(validationService, objectMapper);
+        filterService = new FilterService(validationService, typeConversionService, objectMapper);
 
         // Build a simple table with integer, text, and boolean columns
         List<ColumnInfo> columns = new ArrayList<>();

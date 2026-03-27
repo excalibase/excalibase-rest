@@ -54,25 +54,50 @@ make dev-teardown
 
 ## Code Architecture
 
+### 3-Module Design
+
+The project is organized into three Maven modules under `modules/`:
+
+- **excalibase-rest-starter**: Database-agnostic interfaces, models, and shared utilities. Contains `IQueryCompiler`, `ICommandCompiler`, `IDatabaseSchemaService`, `IAggregationService`, `IFunctionService`, `IOpenApiService`, `IResultMapper`, `IValidationService`, `IUserContextService`. Also houses `FilterService`, `TypeConversionService`, `SqlIdentifier`, and the `MappedResult` record.
+- **excalibase-rest-postgres**: PostgreSQL-specific implementations — `PostgresQueryCompiler`, `PostgresCommandCompiler`, `DatabaseSchemaService`, `AggregationService`, `FunctionService`, `OpenApiService`, `ValidationService`, `SelectParserService`, `UserContextService`.
+- **excalibase-rest-api**: Spring Boot application — controllers, CDC service, WebSocket handler, query execution, exception handling, and configuration.
+
 ### Standalone Spring Boot REST API
 - **No GraphQL dependencies**: Pure REST API implementation
 - **PostgreSQL focused**: Optimized for PostgreSQL features and types
 - **Auto-generated endpoints**: Creates REST endpoints from database schema
-- **Advanced filtering**: Comprehensive filtering operators
+- **Advanced filtering**: Comprehensive filtering operators including full-text search (FTS)
 - **OpenAPI 3.0**: Auto-generated API documentation
+- **Single-CTE query compilation**: Uses `jsonb_agg` pattern for efficient queries
 
 ### Key Components
 
+#### Compiler Layer (starter interfaces + postgres implementations)
+- **IQueryCompiler / PostgresQueryCompiler**: Compiles SELECT queries with filtering, pagination, expansion, and FTS
+- **ICommandCompiler / PostgresCommandCompiler**: Compiles INSERT, UPDATE, DELETE, and UPSERT commands
+
+#### Controller Layer (4 controllers, split by responsibility)
+- **ReadApiController**: GET endpoints — list, get by ID, schema, OpenAPI docs
+- **WriteApiController**: POST/PUT/PATCH/DELETE with `TransactionTemplate` for atomic operations
+- **AdminApiController**: Cache management, schema reload
+- **RpcApiController**: RPC function calls, aggregates, computed fields
+- **ChangeController**: SSE endpoint (`GET /{table}/changes`) for real-time CDC streaming
+
 #### Service Layer
-- **RestApiService**: Core business logic for CRUD operations and filtering
-- **DatabaseSchemaService**: Database metadata introspection and caching
+- **QueryExecutionService**: Extracted query execution helpers (runs compiled queries)
+- **DatabaseSchemaService**: Database metadata introspection with CDC DDL cache invalidation
+- **FilterService**: Shared filter/WHERE clause building (used by compilers and aggregation)
+- **AggregationService**: Aggregation queries with proper filter support
+- **FunctionService**: PostgreSQL function discovery and RPC execution
 - **OpenApiService**: OpenAPI 3.0 specification generation
+- **SelectParserService**: Parses `select` and `expand` query parameters
+- **ValidationService**: Input validation (table names, columns, operators)
+- **UserContextService**: User context extraction for RLS
 - **NatsCDCService**: NATS JetStream CDC consumer; routes DML events to per-table Reactor Sinks
 - **PreferHeaderParser**: Parses `Prefer` header (count, return, resolution directives)
 
-#### Controller Layer
-- **RestApiController**: REST endpoints for table operations and documentation
-- **ChangeController**: SSE endpoint (`GET /{table}/changes`) for real-time CDC streaming
+#### Error Handling
+- **GlobalExceptionHandler**: Centralized error handling via `@ControllerAdvice`
 
 #### WebSocket
 - **WebSocketChangeHandler**: WebSocket handler (`/ws/{table}/changes`) for CDC streaming
@@ -82,12 +107,12 @@ make dev-teardown
 - **RestApiConfig**: Application configuration properties (includes `NatsConfig` inner class)
 - **WebConfig**: CORS and web-related configuration
 
-#### Security / Observability
-- **JwtUserIdExtractor**: Extracts user ID from JWT tokens for request context
-- **RestApiObservabilityFilter**: Adds trace/span context to HTTP responses
+#### Shared Utilities
+- **SqlIdentifier**: SQL identifier quoting utility (prevents injection in identifiers)
+- **MappedResult**: Thread-safe record for result mapping
 
 #### Models
-- **TableInfo**: Database table metadata
+- **TableInfo**: Database table metadata (includes unique constraint detection for upsert)
 - **ColumnInfo**: Database column metadata
 - **ForeignKeyInfo**: Foreign key relationship metadata
 - **CDCEvent**: CDC event model (shared with watcher) — types: INSERT, UPDATE, DELETE, DDL, etc.
@@ -110,14 +135,16 @@ SQL-style filtering with operators:
 - **Array**: in, notin
 - **JSON**: haskey, haskeys, jsoncontains
 - **Array**: arraycontains, arrayhasany, arrayhasall, arraylength
+- **Full-Text Search**: fts, plfts (plain), phfts (phrase), wfts (websearch)
 - **Logic**: OR conditions with `or=(condition1,condition2)`
 
 ### Relationship Expansion
 
 Forward and reverse relationship traversal:
-- **Forward (Many-to-One)**: `expand=customer` 
+- **Forward (Many-to-One)**: `expand=customer`
 - **Reverse (One-to-Many)**: `expand=orders`
-- **Parameterized**: `expand=orders(limit:5,select:total,status)`
+- **Parameterized**: `expand=orders(limit:5,select:id,order:total.desc)`
+- **Nested**: `expand=orders.order_items` (multi-level traversal)
 
 ## Development Guidelines
 
@@ -193,14 +220,14 @@ app:
 ## Performance Optimizations
 
 ### Caching
-- Schema metadata caching with configurable TTL
+- Schema metadata caching with CDC DDL invalidation (no TTL polling)
 - Connection pooling (HikariCP)
-- Efficient query building
+- Single-CTE query compilation for efficient SQL generation
 
 ### Query Optimization
-- N+1 query prevention in relationship expansion
-- Batched relationship loading
-- Optimal SQL generation
+- N+1 query prevention via single-CTE with jsonb_agg expansion
+- Unique constraint detection for upsert conflict resolution
+- Optimal SQL generation via compiler pattern
 
 ## OpenAPI Documentation
 
@@ -218,10 +245,11 @@ app:
 ## Common Development Tasks
 
 ### Adding New Filter Operators
-1. Add operator to `parseCondition()` method in `RestApiService`
-2. Update OpenAPI documentation in `OpenApiService`
-3. Add test cases for the operator
-4. Update README with examples
+1. Add operator handling in `FilterService` (starter module)
+2. Update `PostgresQueryCompiler` if the operator needs special SQL generation
+3. Update OpenAPI documentation in `OpenApiService`
+4. Add test cases for the operator
+5. Update README with examples
 
 ### Adding New PostgreSQL Type Support
 1. Add type constant to `ColumnTypeConstant.java`
@@ -237,11 +265,33 @@ app:
 
 ## Important Files
 
-### Core Implementation
-- `RestApiService.java`: Main business logic
-- `RestApiController.java`: REST endpoints
-- `DatabaseSchemaService.java`: Schema introspection
-- `OpenApiService.java`: Documentation generation
+### Starter Module (excalibase-rest-starter) — Interfaces & Shared Code
+- `IQueryCompiler.java`: Query compiler interface
+- `ICommandCompiler.java`: Command compiler interface
+- `IDatabaseSchemaService.java`, `IAggregationService.java`, `IFunctionService.java`, `IOpenApiService.java`, `IResultMapper.java`, `IValidationService.java`, `IUserContextService.java`: Service interfaces
+- `FilterService.java`: Shared filter/WHERE clause building
+- `TypeConversionService.java`: Type conversion utilities
+- `SqlIdentifier.java`: SQL identifier quoting utility
+- `MappedResult.java`: Thread-safe result mapping record
+
+### Postgres Module (excalibase-rest-postgres) — PostgreSQL Implementations
+- `PostgresQueryCompiler.java`: SELECT query compilation (single-CTE, jsonb_agg pattern)
+- `PostgresCommandCompiler.java`: INSERT/UPDATE/DELETE/UPSERT compilation
+- `DatabaseSchemaService.java`: Schema introspection with CDC DDL cache invalidation
+- `AggregationService.java`: Aggregation queries with filter support
+- `FunctionService.java`: PostgreSQL function discovery and RPC
+- `OpenApiService.java`: OpenAPI 3.0 spec generation
+- `ValidationService.java`: Input validation
+- `SelectParserService.java`: Select/expand parameter parsing
+- `UserContextService.java`: User context for RLS
+
+### API Module (excalibase-rest-api) — Controllers & Application
+- `ReadApiController.java`: GET endpoints (list, get by ID, schema, docs)
+- `WriteApiController.java`: POST/PUT/PATCH/DELETE with TransactionTemplate
+- `AdminApiController.java`: Cache management, schema reload
+- `RpcApiController.java`: RPC functions, aggregates, computed fields
+- `QueryExecutionService.java`: Query execution helpers
+- `GlobalExceptionHandler.java`: Centralized @ControllerAdvice error handling
 
 ### CDC / Real-time
 - `NatsCDCService.java`: NATS JetStream consumer, per-table Reactor Sinks

@@ -471,6 +471,83 @@ describe('Relationship expansion', () => {
     expect(order.customers.name).toBeDefined();
     expect(order.customers.tier).toBeDefined();
   });
+
+  test('expand — parameterized with limit', async () => {
+    // expand=orders(limit:2) should limit nested orders to 2
+    const res = await request('GET', '/customers?expand=orders(limit:2)&limit=3');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    for (const cust of res.body.data) {
+      expect(Array.isArray(cust.orders)).toBe(true);
+      expect(cust.orders.length).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test('expand — parameterized with select', async () => {
+    // expand=orders(select:id,order_number,status) should only return those fields
+    const res = await request('GET', '/customers?expand=orders(select:id,order_number,status)&limit=1');
+    expect(res.status).toBe(200);
+    const cust = res.body.data[0];
+    expect(Array.isArray(cust.orders)).toBe(true);
+    if (cust.orders.length > 0) {
+      const order = cust.orders[0];
+      const keys = Object.keys(order).sort();
+      expect(keys).toEqual(['id', 'order_number', 'status']);
+    }
+  });
+
+  test('expand — parameterized with order', async () => {
+    // expand=orders(order:total.desc) should sort nested orders by total descending
+    const res = await request('GET', '/customers?expand=orders(order:total.desc)&limit=1');
+    expect(res.status).toBe(200);
+    const cust = res.body.data[0];
+    expect(Array.isArray(cust.orders)).toBe(true);
+    if (cust.orders.length >= 2) {
+      expect(Number(cust.orders[0].total)).toBeGreaterThanOrEqual(Number(cust.orders[1].total));
+    }
+  });
+
+  test('expand — nested (orders.order_items)', async () => {
+    // Nested expand: customers → orders → order_items
+    const res = await request('GET', '/customers?expand=orders.order_items&limit=1');
+    expect(res.status).toBe(200);
+    const cust = res.body.data[0];
+    expect(Array.isArray(cust.orders)).toBe(true);
+    if (cust.orders.length > 0) {
+      const order = cust.orders[0];
+      expect(Array.isArray(order.order_items)).toBe(true);
+    }
+  });
+});
+
+// ─── Full-Text Search ─────────────────────────────────────────────────────────
+
+describe('Full-Text Search', () => {
+  test('fts — basic full-text search', async () => {
+    const res = await request('GET', '/products?description=fts.gaming');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    expect(res.body.data[0].description.toLowerCase()).toContain('gaming');
+  });
+
+  test('plfts — plain-text search', async () => {
+    const res = await request('GET', '/products?description=plfts.gaming laptop');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    expect(res.body.data[0].name.toLowerCase()).toContain('gaming');
+  });
+
+  test('phfts — phrase search', async () => {
+    const res = await request('GET', '/products?description=phfts.gaming laptop');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+  });
+
+  test('wfts — websearch syntax', async () => {
+    const res = await request('GET', '/products?description=wfts.gaming OR headphones');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 // ─── Aggregations ────────────────────────────────────────────────────────────

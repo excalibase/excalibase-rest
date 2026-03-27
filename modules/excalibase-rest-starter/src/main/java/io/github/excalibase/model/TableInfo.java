@@ -27,6 +27,8 @@ public class TableInfo {
     private String name;
     private List<ColumnInfo> columns = new ArrayList<>();
     private List<ForeignKeyInfo> foreignKeys = new ArrayList<>();
+    /** Each inner list is one unique constraint (may be multi-column). */
+    private List<List<String>> uniqueConstraints = new ArrayList<>();
     private boolean isView = false;
 
     public TableInfo(String name, List<ColumnInfo> columns, List<ForeignKeyInfo> foreignKeys) {
@@ -76,5 +78,13 @@ public class TableInfo {
 
     public void setView(boolean view) {
         isView = view;
+    }
+
+    public List<List<String>> getUniqueConstraints() {
+        return uniqueConstraints;
+    }
+
+    public void setUniqueConstraints(List<List<String>> uniqueConstraints) {
+        this.uniqueConstraints = uniqueConstraints;
     }
 }

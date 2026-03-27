@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import static io.github.excalibase.util.SqlIdentifier.quoteIdentifier;
 
 @Service
 public class FilterService {
@@ -24,10 +25,10 @@ public class FilterService {
     private final TypeConversionService typeConversionService;
     private final ObjectMapper objectMapper;
 
-    public FilterService(IValidationService validationService, TypeConversionService typeConversionService) {
+    public FilterService(IValidationService validationService, TypeConversionService typeConversionService, ObjectMapper objectMapper) {
         this.validationService = validationService;
         this.typeConversionService = typeConversionService;
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -199,7 +200,7 @@ public class FilterService {
         if (!value.contains(".")) {
             // No operator specified, default to equality
             params.add(typeConversionService.convertValueToColumnType(column, value, tableInfo));
-            return q(column) + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
+            return quoteIdentifier(column) + " = " + typeConversionService.buildPlaceholderWithCast(column, tableInfo);
         }
 
         int firstDot = value.indexOf('.');
@@ -209,16 +210,12 @@ public class FilterService {
         return buildConditionForOperator(column, operator, operatorValue, params, tableInfo);
     }
 
-    /** Quote a SQL identifier (column/table name) with double quotes. */
-    private static String q(String identifier) {
-        return "\"" + identifier + "\"";
-    }
 
     /**
      * Build SQL condition for specific operator
      */
     private String buildConditionForOperator(String column, String operator, String operatorValue, List<Object> params, TableInfo tableInfo) {
-        String qc = q(column); // quoted column for SQL
+        String qc = quoteIdentifier(column); // quoted column for SQL
         switch (operator.toLowerCase()) {
             // ── Excalibase `not` prefix ──────────────────────────────────────────────
             case "not": {
@@ -296,9 +293,9 @@ public class FilterService {
                 params.add(operatorValue);
                 return "jsonb_exists(" + qc + ", ?)";
             case "haskeys":
-                return buildJsonHasKeysCondition(column, operatorValue, "?&");
+                return buildJsonHasKeysCondition(column, operatorValue, "?&", params);
             case "hasanykeys":
-                return buildJsonHasKeysCondition(column, operatorValue, "?|");
+                return buildJsonHasKeysCondition(column, operatorValue, "?|", params);
             case "jsoncontains":
             case "contains":
                 return buildJsonContainsCondition(column, operatorValue, params, "@>");
@@ -311,10 +308,10 @@ public class FilterService {
                 return qc + " ? ?";
             case "jsonexistsany":
             case "existsany":
-                return buildJsonHasKeysCondition(column, operatorValue, "?|");
+                return buildJsonHasKeysCondition(column, operatorValue, "?|", params);
             case "jsonexistsall":
             case "existsall":
-                return buildJsonHasKeysCondition(column, operatorValue, "?&");
+                return buildJsonHasKeysCondition(column, operatorValue, "?&", params);
             case "jsonpath":
                 params.add(operatorValue);
                 return qc + " @? ?::jsonpath";
@@ -327,7 +324,7 @@ public class FilterService {
                 params.add(operatorValue);
                 return qc + " @> ARRAY[?]::" + typeConversionService.getColumnType(column, tableInfo) + "[]";
             case "arrayhasany":
-                return buildArrayHasCondition(column, operatorValue, "&&", tableInfo);
+                return buildArrayHasCondition(column, operatorValue, "&&", tableInfo, params);
             case "arrayhasall":
                 return buildArrayHasAllCondition(column, operatorValue, params);
             case "arraylength":
@@ -399,7 +396,7 @@ public class FilterService {
                     placeholders.add(typeConversionService.buildPlaceholderWithCast(column, tableInfo));
                 }
             }
-            return q(column) + " IN (" + String.join(",", placeholders) + ")";
+            return quoteIdentifier(column) + " IN (" + String.join(",", placeholders) + ")";
         }
         return null;
     }
@@ -423,7 +420,7 @@ public class FilterService {
                     placeholders.add(typeConversionService.buildPlaceholderWithCast(column, tableInfo));
                 }
             }
-            return q(column) + " NOT IN (" + String.join(",", placeholders) + ")";
+            return quoteIdentifier(column) + " NOT IN (" + String.join(",", placeholders) + ")";
         }
         return null;
     }
@@ -432,7 +429,7 @@ public class FilterService {
      * Build IS condition — Excalibase-compatible: null, true, false, unknown.
      */
     private String buildIsCondition(String column, String operatorValue, List<Object> params, TableInfo tableInfo) {
-        String qc = q(column);
+        String qc = quoteIdentifier(column);
         switch (operatorValue.toLowerCase()) {
             case "null":
                 return qc + " IS NULL";
@@ -451,18 +448,15 @@ public class FilterService {
     /**
      * Build JSON has keys condition
      */
-    private String buildJsonHasKeysCondition(String column, String operatorValue, String operator) {
+    private String buildJsonHasKeysCondition(String column, String operatorValue, String operator, List<Object> params) {
         if (operatorValue.startsWith("[") && operatorValue.endsWith("]")) {
             String keysStr = operatorValue.substring(1, operatorValue.length() - 1);
             String[] keys = keysStr.split(",");
-            List<String> cleanKeys = new ArrayList<>();
-            for (String key : keys) {
-                cleanKeys.add(key.trim().replace("\"", ""));
-            }
-            String arrayLiteral = "ARRAY[" + cleanKeys.stream()
-                .map(key -> "'" + key + "'")
-                .collect(Collectors.joining(",")) + "]";
-            return q(column) + " " + operator + " " + arrayLiteral;
+            String[] cleanKeys = java.util.Arrays.stream(keys)
+                    .map(k -> k.trim().replace("\"", ""))
+                    .toArray(String[]::new);
+            params.add(cleanKeys);
+            return quoteIdentifier(column) + " " + operator + " ?::text[]";
         } else {
             throw new IllegalArgumentException("JSON keys operator requires array format: [\"key1\",\"key2\"]");
         }
@@ -476,7 +470,7 @@ public class FilterService {
             // Validate JSON format
             objectMapper.readTree(operatorValue);
             params.add(operatorValue);
-            return q(column) + " " + operator + " ?::jsonb";
+            return quoteIdentifier(column) + " " + operator + " ?::jsonb";
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid JSON format for contains operator: " + operatorValue);
         }
@@ -485,19 +479,17 @@ public class FilterService {
     /**
      * Build array has condition (overlaps)
      */
-    private String buildArrayHasCondition(String column, String operatorValue, String operator, TableInfo tableInfo) {
-        if ((operatorValue.startsWith("[") && operatorValue.endsWith("]")) || 
+    private String buildArrayHasCondition(String column, String operatorValue, String operator, TableInfo tableInfo, List<Object> params) {
+        if ((operatorValue.startsWith("[") && operatorValue.endsWith("]")) ||
             (operatorValue.startsWith("{") && operatorValue.endsWith("}"))) {
             String valuesStr = operatorValue.substring(1, operatorValue.length() - 1);
             String[] values = valuesStr.split(",");
-            List<String> cleanValues = new ArrayList<>();
-            for (String val : values) {
-                cleanValues.add(val.trim().replace("\"", ""));
-            }
-            String arrayLiteral = "ARRAY[" + cleanValues.stream()
-                .map(val -> "'" + val + "'")
-                .collect(Collectors.joining(",")) + "]::" + typeConversionService.getColumnType(column, tableInfo) + "[]";
-            return q(column) + " " + operator + " " + arrayLiteral;
+            String[] cleanValues = java.util.Arrays.stream(values)
+                    .map(v -> v.trim().replace("\"", ""))
+                    .toArray(String[]::new);
+            params.add(cleanValues);
+            String colType = typeConversionService.getColumnType(column, tableInfo);
+            return quoteIdentifier(column) + " " + operator + " ?::" + colType + "[]";
         }
         return null;
     }
@@ -514,7 +506,7 @@ public class FilterService {
                 cleanValues.add(val.trim().replace("\"", ""));
             }
             params.add(cleanValues.toArray(new String[0]));
-            return q(column) + " @> ?";
+            return quoteIdentifier(column) + " @> ?";
         }
         return null;
     }

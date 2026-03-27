@@ -1,6 +1,7 @@
 package io.github.excalibase.controller;
 
 import io.github.excalibase.model.CDCEvent;
+import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.NatsCDCService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,8 @@ import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -25,11 +28,14 @@ class ChangeControllerTest {
     @Mock
     private NatsCDCService natsCDCService;
 
+    @Mock(lenient = true)
+    private IValidationService validationService;
+
     private ChangeController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new ChangeController(natsCDCService);
+        controller = new ChangeController(natsCDCService, validationService);
     }
 
     @Test
@@ -141,5 +147,15 @@ class ChangeControllerTest {
         SseEmitter emitter = controller.streamChanges("customers");
         assertThat(emitter).isNotNull();
         // Simulating timeout invocation should not throw
+    }
+
+    @Test
+    void streamChanges_invalidTable_throwsException() {
+        doThrow(new IllegalArgumentException("Table not found: nonexistent"))
+                .when(validationService).getValidatedTableInfo("nonexistent");
+
+        assertThatThrownBy(() -> controller.streamChanges("nonexistent"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Table not found");
     }
 }

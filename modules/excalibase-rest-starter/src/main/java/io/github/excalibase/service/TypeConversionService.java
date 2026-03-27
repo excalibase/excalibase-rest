@@ -18,9 +18,9 @@ public class TypeConversionService {
     private final ObjectMapper objectMapper;
     private final IValidationService validationService;
 
-    public TypeConversionService(IValidationService validationService) {
+    public TypeConversionService(IValidationService validationService, ObjectMapper objectMapper) {
         this.validationService = validationService;
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = objectMapper;
     }
 
     /**
