@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "excalibase-rest.fullname" . }}
+  labels:
+    {{- include "excalibase-rest.labels" . | nindent 4 }}
+data:
+  # Database
+  SPRING_DATASOURCE_URL: {{ .Values.database.url | quote }}
+  SPRING_DATASOURCE_DRIVER_CLASS_NAME: "org.postgresql.Driver"
+
+  # HikariCP
+  SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: {{ .Values.hikari.maximumPoolSize | quote }}
+  SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: {{ .Values.hikari.minimumIdle | quote }}
+  SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: {{ .Values.hikari.connectionTimeout | quote }}
+  SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT: {{ .Values.hikari.idleTimeout | quote }}
+  SPRING_DATASOURCE_HIKARI_MAX_LIFETIME: {{ .Values.hikari.maxLifetime | int | quote }}
+
+  # Tomcat
+  SERVER_TOMCAT_THREADS_MAX: {{ .Values.tomcat.threadsMax | quote }}
+  SERVER_TOMCAT_THREADS_MIN_SPARE: {{ .Values.tomcat.threadsMinSpare | quote }}
+  SERVER_TOMCAT_MAX_CONNECTIONS: {{ .Values.tomcat.maxConnections | quote }}
+  SERVER_TOMCAT_ACCEPT_COUNT: {{ .Values.tomcat.acceptCount | quote }}
+  SERVER_TOMCAT_CONNECTION_TIMEOUT: {{ .Values.tomcat.connectionTimeout | quote }}
+
+  # Virtual threads
+  SPRING_THREADS_VIRTUAL_ENABLED: {{ .Values.virtualThreads.enabled | quote }}
+
+  # Application
+  SERVER_PORT: {{ .Values.app.port | quote }}
+  APP_ALLOWED_SCHEMA: {{ .Values.app.allowedSchema | quote }}
+  APP_DATABASE_TYPE: {{ .Values.app.databaseType | quote }}
+  APP_MAX_PAGE_SIZE: {{ .Values.app.maxPageSize | quote }}
+  APP_DEFAULT_PAGE_SIZE: {{ .Values.app.defaultPageSize | quote }}
+
+  # NATS CDC subscription
+  APP_NATS_ENABLED: {{ .Values.app.nats.enabled | quote }}
+  APP_NATS_URL: {{ .Values.app.nats.url | quote }}
+  APP_NATS_STREAM_NAME: {{ .Values.app.nats.streamName | quote }}
+  APP_NATS_SUBJECT_PREFIX: {{ .Values.app.nats.subjectPrefix | quote }}

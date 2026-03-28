@@ -1,0 +1,18 @@
+apiVersion: v2
+name: excalibase-rest
+description: Automatic REST API generation from PostgreSQL databases
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - rest
+  - postgresql
+  - api
+  - crud
+  - cdc
+home: https://github.com/excalibase/excalibase-rest
+sources:
+  - https://github.com/excalibase/excalibase-rest
+maintainers:
+  - name: Excalibase Team
+    url: https://github.com/excalibase
