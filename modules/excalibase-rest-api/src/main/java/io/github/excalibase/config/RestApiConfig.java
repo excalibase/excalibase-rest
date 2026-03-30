@@ -10,6 +10,7 @@ public class RestApiConfig {
 
     private String allowedSchema = "public";
     private String databaseType = "postgres";
+    private String serverUrl = "http://localhost:20000";
     private int maxPageSize = 1000;
     private int defaultPageSize = 100;
     private long schemaCacheTtlSeconds = 300; // 5 minutes
@@ -37,6 +38,14 @@ public class RestApiConfig {
 
     public void setDatabaseType(String databaseType) {
         this.databaseType = databaseType;
+    }
+
+    public String getServerUrl() {
+        return serverUrl;
+    }
+
+    public void setServerUrl(String serverUrl) {
+        this.serverUrl = serverUrl;
     }
 
     public int getMaxPageSize() {

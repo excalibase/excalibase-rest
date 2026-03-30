@@ -63,6 +63,9 @@ app:
   # Server port (must match service.port)
   port: 20000
 
+  # OpenAPI server URL
+  serverUrl: "https://api.excalibase.io"
+
   # Actuator base path (avoids collision with REST endpoints)
   actuatorBasePath: "/rest-actuator"
 

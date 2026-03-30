@@ -59,6 +59,7 @@ app:
   # Database configuration
   allowed-schema: public
   database-type: postgres
+  server-url: http://localhost:20000
 
   # Pagination configuration
   max-page-size: 1000

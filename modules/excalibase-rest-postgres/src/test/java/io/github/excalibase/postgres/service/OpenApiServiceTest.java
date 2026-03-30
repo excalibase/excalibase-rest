@@ -27,7 +27,7 @@ class OpenApiServiceTest {
 
     @BeforeEach
     void setup() {
-        openApiService = new OpenApiService(schemaService);
+        openApiService = new OpenApiService(schemaService, "http://localhost:20000");
     }
 
     // ===== generateOpenApiSpec structure tests =====

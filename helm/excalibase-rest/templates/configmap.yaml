@@ -39,5 +39,8 @@ data:
   APP_NATS_STREAM_NAME: {{ .Values.app.nats.streamName | quote }}
   APP_NATS_SUBJECT_PREFIX: {{ .Values.app.nats.subjectPrefix | quote }}
 
+  # OpenAPI
+  APP_SERVER_URL: {{ .Values.app.serverUrl | quote }}
+
   # Actuator
   MANAGEMENT_ENDPOINTS_WEB_BASE_PATH: {{ .Values.app.actuatorBasePath | quote }}

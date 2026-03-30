@@ -2,6 +2,7 @@ package io.github.excalibase.postgres.service;
 
 import io.github.excalibase.model.ColumnInfo;
 import io.github.excalibase.model.TableInfo;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -13,9 +14,12 @@ import java.util.Map;
 public class OpenApiService implements io.github.excalibase.service.IOpenApiService {
 
     private final DatabaseSchemaService schemaService;
+    private final String serverUrl;
 
-    public OpenApiService(DatabaseSchemaService schemaService) {
+    public OpenApiService(DatabaseSchemaService schemaService,
+                          @Value("${app.server-url:http://localhost:20000}") String serverUrl) {
         this.schemaService = schemaService;
+        this.serverUrl = serverUrl;
     }
 
     /**
@@ -53,8 +57,8 @@ public class OpenApiService implements io.github.excalibase.service.IOpenApiServ
     private List<Map<String, Object>> createServersSection() {
         List<Map<String, Object>> servers = new ArrayList<>();
         servers.add(Map.of(
-            "url", "http://localhost:20000",
-            "description", "Development server"
+            "url", serverUrl,
+            "description", "API server"
         ));
         return servers;
     }
