@@ -38,3 +38,6 @@ data:
   APP_NATS_URL: {{ .Values.app.nats.url | quote }}
   APP_NATS_STREAM_NAME: {{ .Values.app.nats.streamName | quote }}
   APP_NATS_SUBJECT_PREFIX: {{ .Values.app.nats.subjectPrefix | quote }}
+
+  # Actuator
+  MANAGEMENT_ENDPOINTS_WEB_BASE_PATH: {{ .Values.app.actuatorBasePath | quote }}

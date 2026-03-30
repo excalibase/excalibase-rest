@@ -156,6 +156,7 @@ logging:
 management:
   endpoints:
     web:
+      base-path: /rest-actuator
       exposure:
         include: health,info,metrics
   endpoint:
