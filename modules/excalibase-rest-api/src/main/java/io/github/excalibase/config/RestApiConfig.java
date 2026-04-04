@@ -184,6 +184,10 @@ public class RestApiConfig {
         private String userIdExtractorType = "header";
         private String userIdHeader = "X-User-Id";
 
+        // JWT configuration
+        private boolean jwtEnabled = false;
+        private String provisioningUrl = "http://localhost:24005/api";
+
         public boolean isEnableSqlInjectionProtection() {
             return enableSqlInjectionProtection;
         }
@@ -248,6 +252,22 @@ public class RestApiConfig {
 
         public void setUserIdHeader(String userIdHeader) {
             this.userIdHeader = userIdHeader;
+        }
+
+        public boolean isJwtEnabled() {
+            return jwtEnabled;
+        }
+
+        public void setJwtEnabled(boolean jwtEnabled) {
+            this.jwtEnabled = jwtEnabled;
+        }
+
+        public String getProvisioningUrl() {
+            return provisioningUrl;
+        }
+
+        public void setProvisioningUrl(String provisioningUrl) {
+            this.provisioningUrl = provisioningUrl;
         }
     }
 }
