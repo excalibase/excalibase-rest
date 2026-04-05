@@ -907,3 +907,280 @@ describe('Admin endpoints', () => {
     expect([200, 204]).toContain(res.status);
   });
 });
+
+// ─── JWT + RLS Integration Tests ──────────────────────────────────────────────
+
+const AUTH_URL = process.env.AUTH_URL || 'http://localhost:24000';
+const PROJECT_ID = 'e2e-rest';
+
+async function authPost(path, body) {
+  const res = await fetch(`${AUTH_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, data: await res.json().catch(() => ({})) };
+}
+
+describe('JWT Authentication (via excalibase-auth)', () => {
+  let accessToken;
+
+  beforeAll(async () => {
+    // Wait for auth service
+    for (let i = 0; i < 15; i++) {
+      try {
+        const r = await fetch(`${AUTH_URL}/healthz`, { signal: AbortSignal.timeout(3000) });
+        if (r.ok) break;
+      } catch (_) {}
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    // Register (ignore 409)
+    await authPost(`/auth/${PROJECT_ID}/register`, {
+      email: 'alice-rest@test.com', password: 'secret123', fullName: 'Alice REST',
+    });
+
+    // Login
+    const login = await authPost(`/auth/${PROJECT_ID}/login`, {
+      email: 'alice-rest@test.com', password: 'secret123',
+    });
+    accessToken = login.data.accessToken;
+  });
+
+  test('login returns valid JWT', () => {
+    expect(accessToken).toBeTruthy();
+    expect(accessToken).toMatch(/^eyJ/);
+  });
+
+  test('validate token via auth service', async () => {
+    const res = await authPost(`/auth/${PROJECT_ID}/validate`, { token: accessToken });
+    expect(res.status).toBe(200);
+    expect(res.data.valid).toBe(true);
+    expect(res.data.email).toBe('alice-rest@test.com');
+  });
+
+  test('REST accepts valid JWT', async () => {
+    const res = await request('GET', '/rls_orders', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test('REST rejects invalid JWT with 401', async () => {
+    const res = await request('GET', '/rls_orders', {
+      headers: { Authorization: 'Bearer invalid.jwt.token' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test('REST without token still works (no 401)', async () => {
+    const res = await request('GET', '');
+    expect(res.status).toBe(200);
+  });
+
+  test('refresh token returns new access token', async () => {
+    const login = await authPost(`/auth/${PROJECT_ID}/login`, {
+      email: 'alice-rest@test.com', password: 'secret123',
+    });
+    const res = await authPost(`/auth/${PROJECT_ID}/refresh`, {
+      refreshToken: login.data.refreshToken,
+    });
+    expect(res.status).toBe(200);
+    expect(res.data.accessToken).toMatch(/^eyJ/);
+  });
+});
+
+describe('RLS with X-User-Id header', () => {
+  test('alice sees only her RLS orders', async () => {
+    const res = await request('GET', '/rls_orders', {
+      headers: { 'X-User-Id': 'alice' },
+    });
+    expect(res.status).toBe(200);
+    const orders = res.body.data || res.body;
+    expect(orders).toHaveLength(2);
+    orders.forEach(o => expect(o.user_id).toBe('alice'));
+  });
+
+  test('bob sees only his RLS orders', async () => {
+    const res = await request('GET', '/rls_orders', {
+      headers: { 'X-User-Id': 'bob' },
+    });
+    expect(res.status).toBe(200);
+    const orders = res.body.data || res.body;
+    expect(orders).toHaveLength(2);
+    orders.forEach(o => expect(o.user_id).toBe('bob'));
+  });
+
+  test('alice and bob see different rows', async () => {
+    const aliceRes = await request('GET', '/rls_orders', {
+      headers: { 'X-User-Id': 'alice' },
+    });
+    const bobRes = await request('GET', '/rls_orders', {
+      headers: { 'X-User-Id': 'bob' },
+    });
+    const aliceIds = (aliceRes.body.data || []).map(o => o.id);
+    const bobIds = (bobRes.body.data || []).map(o => o.id);
+    const overlap = aliceIds.filter(id => bobIds.includes(id));
+    expect(overlap).toHaveLength(0);
+  });
+
+  test('no user context returns empty (FORCE RLS)', async () => {
+    const res = await request('GET', '/rls_orders');
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('Multi-table RLS', () => {
+  test('alice sees her orders AND payments', async () => {
+    const orders = await request('GET', '/rls_orders', { headers: { 'X-User-Id': 'alice' } });
+    const payments = await request('GET', '/rls_payments', { headers: { 'X-User-Id': 'alice' } });
+
+    expect(orders.status).toBe(200);
+    expect(payments.status).toBe(200);
+
+    const orderData = orders.body.data || [];
+    const paymentData = payments.body.data || [];
+
+    expect(orderData).toHaveLength(2);
+    expect(paymentData).toHaveLength(2);
+    orderData.forEach(o => expect(o.user_id).toBe('alice'));
+    paymentData.forEach(p => expect(p.user_id).toBe('alice'));
+  });
+
+  test('bob sees different data across both tables', async () => {
+    const orders = await request('GET', '/rls_orders', { headers: { 'X-User-Id': 'bob' } });
+    const payments = await request('GET', '/rls_payments', { headers: { 'X-User-Id': 'bob' } });
+
+    const orderData = orders.body.data || [];
+    const paymentData = payments.body.data || [];
+
+    expect(orderData).toHaveLength(2);
+    expect(paymentData).toHaveLength(1);
+    orderData.forEach(o => expect(o.user_id).toBe('bob'));
+    paymentData.forEach(p => expect(p.user_id).toBe('bob'));
+  });
+
+  test('RLS isolation — alice and bob have no overlapping rows in either table', async () => {
+    const aliceOrders = await request('GET', '/rls_orders', { headers: { 'X-User-Id': 'alice' } });
+    const bobOrders = await request('GET', '/rls_orders', { headers: { 'X-User-Id': 'bob' } });
+    const alicePayments = await request('GET', '/rls_payments', { headers: { 'X-User-Id': 'alice' } });
+    const bobPayments = await request('GET', '/rls_payments', { headers: { 'X-User-Id': 'bob' } });
+
+    const aIds = (aliceOrders.body.data || []).map(o => o.id);
+    const bIds = (bobOrders.body.data || []).map(o => o.id);
+    expect(aIds.filter(id => bIds.includes(id))).toHaveLength(0);
+
+    const apIds = (alicePayments.body.data || []).map(p => p.id);
+    const bpIds = (bobPayments.body.data || []).map(p => p.id);
+    expect(apIds.filter(id => bpIds.includes(id))).toHaveLength(0);
+  });
+});
+
+describe('JWT + RLS combined (same assertions as X-User-Id)', () => {
+  let userAToken, userBToken;
+  let userAId, userBId;
+
+  beforeAll(async () => {
+    // Register two users via auth
+    await authPost(`/auth/${PROJECT_ID}/register`, {
+      email: 'rls-user-a@test.com', password: 'secret123', fullName: 'User A',
+    });
+    await authPost(`/auth/${PROJECT_ID}/register`, {
+      email: 'rls-user-b@test.com', password: 'secret123', fullName: 'User B',
+    });
+
+    const loginA = await authPost(`/auth/${PROJECT_ID}/login`, {
+      email: 'rls-user-a@test.com', password: 'secret123',
+    });
+    const loginB = await authPost(`/auth/${PROJECT_ID}/login`, {
+      email: 'rls-user-b@test.com', password: 'secret123',
+    });
+
+    userAToken = loginA.data.accessToken;
+    userBToken = loginB.data.accessToken;
+    userAId = String(loginA.data.user.id);
+    userBId = String(loginB.data.user.id);
+
+    // Clean + insert RLS data with numeric user IDs matching the JWT claims
+    const { psql } = require('./client');
+    psql(`DELETE FROM rls_orders WHERE user_id IN ('${userAId}', '${userBId}')`);
+    psql(`DELETE FROM rls_payments WHERE user_id IN ('${userAId}', '${userBId}')`);
+    psql(`INSERT INTO rls_orders (user_id, product, amount) VALUES ('${userAId}', 'JWT Widget', 10.00), ('${userAId}', 'JWT Gadget', 20.00)`);
+    psql(`INSERT INTO rls_orders (user_id, product, amount) VALUES ('${userBId}', 'JWT Other', 30.00)`);
+    psql(`INSERT INTO rls_payments (user_id, amount, method) VALUES ('${userAId}', 10.00, 'card'), ('${userAId}', 20.00, 'paypal')`);
+    psql(`INSERT INTO rls_payments (user_id, amount, method) VALUES ('${userBId}', 50.00, 'card')`);
+  });
+
+  test('user A sees only their orders via JWT', async () => {
+    const res = await request('GET', '/rls_orders', {
+      headers: { Authorization: `Bearer ${userAToken}` },
+    });
+    expect(res.status).toBe(200);
+    const orders = res.body.data || [];
+    expect(orders).toHaveLength(2);
+    orders.forEach(o => expect(o.user_id).toBe(userAId));
+  });
+
+  test('user B sees only their orders via JWT', async () => {
+    const res = await request('GET', '/rls_orders', {
+      headers: { Authorization: `Bearer ${userBToken}` },
+    });
+    expect(res.status).toBe(200);
+    const orders = res.body.data || [];
+    expect(orders).toHaveLength(1);
+    orders.forEach(o => expect(o.user_id).toBe(userBId));
+  });
+
+  test('user A sees only their payments via JWT', async () => {
+    const res = await request('GET', '/rls_payments', {
+      headers: { Authorization: `Bearer ${userAToken}` },
+    });
+    expect(res.status).toBe(200);
+    const payments = res.body.data || [];
+    expect(payments).toHaveLength(2);
+    payments.forEach(p => expect(p.user_id).toBe(userAId));
+  });
+
+  test('user B sees only their payments via JWT', async () => {
+    const res = await request('GET', '/rls_payments', {
+      headers: { Authorization: `Bearer ${userBToken}` },
+    });
+    expect(res.status).toBe(200);
+    const payments = res.body.data || [];
+    expect(payments).toHaveLength(1);
+    payments.forEach(p => expect(p.user_id).toBe(userBId));
+  });
+
+  test('JWT users have no overlapping rows in orders', async () => {
+    const aRes = await request('GET', '/rls_orders', { headers: { Authorization: `Bearer ${userAToken}` } });
+    const bRes = await request('GET', '/rls_orders', { headers: { Authorization: `Bearer ${userBToken}` } });
+    const aIds = (aRes.body.data || []).map(o => o.id);
+    const bIds = (bRes.body.data || []).map(o => o.id);
+    expect(aIds.filter(id => bIds.includes(id))).toHaveLength(0);
+  });
+
+  test('JWT users have no overlapping rows in payments', async () => {
+    const aRes = await request('GET', '/rls_payments', { headers: { Authorization: `Bearer ${userAToken}` } });
+    const bRes = await request('GET', '/rls_payments', { headers: { Authorization: `Bearer ${userBToken}` } });
+    const aIds = (aRes.body.data || []).map(p => p.id);
+    const bIds = (bRes.body.data || []).map(p => p.id);
+    expect(aIds.filter(id => bIds.includes(id))).toHaveLength(0);
+  });
+
+  test('JWT + filter query respects RLS', async () => {
+    const res = await request('GET', '/rls_orders?amount=gt.15', {
+      headers: { Authorization: `Bearer ${userAToken}` },
+    });
+    expect(res.status).toBe(200);
+    const orders = res.body.data || [];
+    expect(orders).toHaveLength(1);
+    expect(orders[0].product).toBe('JWT Gadget');
+  });
+
+  test('invalid JWT returns 401', async () => {
+    const res = await request('GET', '/rls_orders', {
+      headers: { Authorization: 'Bearer bad.jwt.token' },
+    });
+    expect(res.status).toBe(401);
+  });
+});
