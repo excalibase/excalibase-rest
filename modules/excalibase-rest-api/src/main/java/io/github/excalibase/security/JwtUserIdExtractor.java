@@ -12,13 +12,18 @@ import java.util.Map;
 @ConditionalOnProperty(name = "app.security.jwt-enabled", havingValue = "true")
 public class JwtUserIdExtractor implements IUserIdExtractor {
 
+    @org.springframework.beans.factory.annotation.Value("${app.security.user-id-header:X-User-Id}")
+    private String fallbackHeader;
+
     @Override
     public String extractUserId(HttpServletRequest request) {
+        // Prefer JWT claims
         JwtClaims claims = (JwtClaims) request.getAttribute(JwtAuthFilter.JWT_CLAIMS_ATTR);
-        if (claims == null) {
-            return null;
+        if (claims != null) {
+            return String.valueOf(claims.userId());
         }
-        return String.valueOf(claims.userId());
+        // Fallback to X-User-Id header (backward compatibility)
+        return request.getHeader(fallbackHeader);
     }
 
     @Override
