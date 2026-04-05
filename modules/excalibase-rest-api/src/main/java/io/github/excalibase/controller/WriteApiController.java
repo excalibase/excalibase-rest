@@ -7,10 +7,13 @@ import io.github.excalibase.model.ColumnInfo;
 import io.github.excalibase.model.TableInfo;
 import static io.github.excalibase.util.SqlIdentifier.quoteIdentifier;
 import io.github.excalibase.postgres.util.PostgresTypeConverter;
+import io.github.excalibase.security.UserContext;
 import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.FilterService;
 import io.github.excalibase.service.PreferHeaderParser;
+import io.github.excalibase.service.RlsQueryExecutor;
 import io.github.excalibase.service.TypeConversionService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -53,6 +57,7 @@ public class WriteApiController {
     private final TypeConversionService typeConversionService;
     private final PreferHeaderParser preferParser;
     private final TransactionTemplate transactionTemplate;
+    private final RlsQueryExecutor rlsQueryExecutor;
 
     public WriteApiController(ICommandCompiler commandCompiler,
                                JdbcTemplate jdbcTemplate,
@@ -60,7 +65,8 @@ public class WriteApiController {
                                FilterService filterService,
                                TypeConversionService typeConversionService,
                                PreferHeaderParser preferParser,
-                               PlatformTransactionManager transactionManager) {
+                               PlatformTransactionManager transactionManager,
+                               RlsQueryExecutor rlsQueryExecutor) {
         this.commandCompiler = commandCompiler;
         this.jdbcTemplate = jdbcTemplate;
         this.validationService = validationService;
@@ -68,6 +74,7 @@ public class WriteApiController {
         this.typeConversionService = typeConversionService;
         this.preferParser = preferParser;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.rlsQueryExecutor = rlsQueryExecutor;
     }
 
     // ─── POST /{table} ────────────────────────────────────────────────────────
@@ -76,8 +83,10 @@ public class WriteApiController {
     public ResponseEntity<?> createRecord(
             @PathVariable String table,
             @RequestBody Object data,
-            @RequestHeader(value = "Prefer", required = false) String prefer) {
+            @RequestHeader(value = "Prefer", required = false) String prefer,
+            HttpServletRequest request) {
         try {
+            UserContext ctx = UserContext.fromRequest(request);
             validationService.validateTablePermission(table, "INSERT");
             TableInfo tableInfo = validationService.getValidatedTableInfo(table);
 
@@ -99,7 +108,7 @@ public class WriteApiController {
                         List<Map<String, Object>> txResults = new ArrayList<>();
                         for (Map<String, Object> row : bulkData) {
                             CompiledQuery q = commandCompiler.upsert(table, tableInfo, row, conflictCols);
-                            List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+                            List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
                             if (!rows.isEmpty()) {
                                 txResults.addAll(PostgresTypeConverter.convertPostgresTypes(rows, tableInfo));
                             }
@@ -109,7 +118,7 @@ public class WriteApiController {
                     if (results == null) results = List.of();
                 } else {
                     CompiledQuery q = commandCompiler.bulkInsert(table, tableInfo, bulkData);
-                    List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+                    List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
                     results = rows != null ? PostgresTypeConverter.convertPostgresTypes(rows, tableInfo) : List.of();
                 }
                 return applyReturnMode(ResponseEntity.status(HttpStatus.CREATED), returnMode, table,
@@ -127,12 +136,12 @@ public class WriteApiController {
                 if (isUpsert) {
                     List<String> conflictCols = resolveConflictColumns(tableInfo, singleData);
                     CompiledQuery q = commandCompiler.upsert(table, tableInfo, singleData, conflictCols);
-                    List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+                    List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
                     result = rows != null && !rows.isEmpty()
                             ? PostgresTypeConverter.convertPostgresTypesInRecord(rows.get(0), tableInfo) : null;
                 } else {
                     CompiledQuery q = commandCompiler.insert(table, tableInfo, singleData);
-                    List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+                    List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
                     result = rows != null && !rows.isEmpty()
                             ? PostgresTypeConverter.convertPostgresTypesInRecord(rows.get(0), tableInfo) : null;
                 }
@@ -161,8 +170,10 @@ public class WriteApiController {
             @PathVariable String table,
             @PathVariable(required = false) String id,
             @RequestParam MultiValueMap<String, String> allParams,
-            @RequestBody Object data) {
+            @RequestBody Object data,
+            HttpServletRequest request) {
         try {
+            UserContext ctx = UserContext.fromRequest(request);
             if (data == null) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                         .body(Map.of("error", "Request body cannot be empty"));
@@ -190,7 +201,7 @@ public class WriteApiController {
                             throw new IllegalArgumentException("Each update item must have a 'data' field");
                         }
                         CompiledQuery q = commandCompiler.update(table, tableInfo, itemId, itemData);
-                        List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+                        List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
                         if (!rows.isEmpty()) {
                             txResults.addAll(PostgresTypeConverter.convertPostgresTypes(rows, tableInfo));
                         }
@@ -210,7 +221,7 @@ public class WriteApiController {
 
                 if (id != null && !id.isBlank()) {
                     CompiledQuery q = commandCompiler.update(table, tableInfo, id, mapData);
-                    List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+                    List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
                     if (rows == null || rows.isEmpty()) {
                         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                                 .body(Map.of("error", "Record not found"));
@@ -225,7 +236,7 @@ public class WriteApiController {
                                 .body(Map.of("error",
                                         "Either ID in path, array of update objects, or query filters required"));
                     }
-                    Map<String, Object> result = updateRecordsByFilters(table, tableInfo, filters, mapData);
+                    Map<String, Object> result = updateRecordsByFilters(ctx, table, tableInfo, filters, mapData);
                     return ResponseEntity.ok(result);
                 }
             } else {
@@ -248,8 +259,10 @@ public class WriteApiController {
             @PathVariable String table,
             @PathVariable String id,
             @RequestBody Map<String, Object> data,
-            @RequestHeader(value = "Prefer", required = false) String prefer) {
+            @RequestHeader(value = "Prefer", required = false) String prefer,
+            HttpServletRequest request) {
         try {
+            UserContext ctx = UserContext.fromRequest(request);
             if (data == null || data.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                         .body(Map.of("error", "Request body cannot be empty"));
@@ -258,7 +271,7 @@ public class WriteApiController {
             TableInfo tableInfo = validationService.getValidatedTableInfo(table);
 
             CompiledQuery q = commandCompiler.patch(table, tableInfo, id, data);
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+            List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
             if (rows == null || rows.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("error", "Record not found"));
@@ -286,15 +299,17 @@ public class WriteApiController {
             @PathVariable String table,
             @PathVariable(required = false) String id,
             @RequestParam MultiValueMap<String, String> allParams,
-            @RequestHeader(value = "Prefer", required = false) String prefer) {
+            @RequestHeader(value = "Prefer", required = false) String prefer,
+            HttpServletRequest request) {
         try {
+            UserContext ctx = UserContext.fromRequest(request);
             validationService.validateTablePermission(table, "DELETE");
             TableInfo tableInfo = validationService.getValidatedTableInfo(table);
             boolean wantsBody = prefer != null && prefer.contains("return=representation");
 
             if (id != null) {
                 CompiledQuery q = commandCompiler.delete(table, tableInfo, id);
-                List<Map<String, Object>> rows = jdbcTemplate.queryForList(q.sql(), q.params());
+                List<Map<String, Object>> rows = rlsQueryForList(ctx, q);
                 if (rows == null || rows.isEmpty()) {
                     return ResponseEntity.status(HttpStatus.NOT_FOUND)
                             .body(Map.of("error", "Record not found"));
@@ -310,7 +325,7 @@ public class WriteApiController {
                             .body(Map.of("error",
                                     "Query filters required for horizontal delete. Use DELETE /{table}?column=value"));
                 }
-                Map<String, Object> result = deleteRecordsByFilters(table, tableInfo, filters);
+                Map<String, Object> result = deleteRecordsByFilters(ctx, table, tableInfo, filters);
                 return ResponseEntity.ok(result);
             }
         } catch (IllegalArgumentException e) {
@@ -337,7 +352,7 @@ public class WriteApiController {
         return pkCols.isEmpty() ? List.of("id") : pkCols;
     }
 
-    private Map<String, Object> updateRecordsByFilters(String table, TableInfo tableInfo,
+    private Map<String, Object> updateRecordsByFilters(UserContext ctx, String table, TableInfo tableInfo,
                                                         MultiValueMap<String, String> filters,
                                                         Map<String, Object> updateData) {
         List<Object> params = new ArrayList<>();
@@ -360,7 +375,7 @@ public class WriteApiController {
         String sql = "UPDATE " + quoteIdentifier(table) + " SET " + String.join(", ", setClauses)
                 + " WHERE " + String.join(" AND ", conditions) + " RETURNING *";
 
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, params.toArray());
+        List<Map<String, Object>> rows = rlsQueryForList(ctx, sql, params.toArray());
         List<Map<String, Object>> results = rows != null
                 ? PostgresTypeConverter.convertPostgresTypes(rows, tableInfo) : List.of();
         Map<String, Object> result = new HashMap<>();
@@ -369,14 +384,40 @@ public class WriteApiController {
         return result;
     }
 
-    private Map<String, Object> deleteRecordsByFilters(String table, TableInfo tableInfo,
+    private Map<String, Object> deleteRecordsByFilters(UserContext ctx, String table, TableInfo tableInfo,
                                                         MultiValueMap<String, String> filters) {
         List<Object> params = new ArrayList<>();
         List<String> conditions = filterService.parseFilters(filters, params, tableInfo);
 
         String sql = "DELETE FROM " + quoteIdentifier(table) + " WHERE " + String.join(" AND ", conditions);
+        if (ctx != null) {
+            try {
+                int deletedCount = rlsQueryExecutor.update(ctx.userId(), ctx.claims(), sql, params.toArray());
+                return Map.of("deleted", deletedCount, "message", "Deleted " + deletedCount + " records");
+            } catch (SQLException e) {
+                throw new RuntimeException("RLS query failed: " + e.getMessage(), e);
+            }
+        }
         int deletedCount = jdbcTemplate.update(sql, params.toArray());
         return Map.of("deleted", deletedCount, "message", "Deleted " + deletedCount + " records");
+    }
+
+    /**
+     * Execute a compiled query via RLS executor when ctx is present, else use jdbcTemplate.
+     */
+    private List<Map<String, Object>> rlsQueryForList(UserContext ctx, CompiledQuery compiled) {
+        return rlsQueryForList(ctx, compiled.sql(), compiled.params());
+    }
+
+    private List<Map<String, Object>> rlsQueryForList(UserContext ctx, String sql, Object... params) {
+        if (ctx != null) {
+            try {
+                return rlsQueryExecutor.queryForList(ctx.userId(), ctx.claims(), sql, params);
+            } catch (SQLException e) {
+                throw new RuntimeException("RLS query failed: " + e.getMessage(), e);
+            }
+        }
+        return jdbcTemplate.queryForList(sql, params);
     }
 
     private ResponseEntity<?> applyReturnMode(ResponseEntity.BodyBuilder builder, String returnMode,

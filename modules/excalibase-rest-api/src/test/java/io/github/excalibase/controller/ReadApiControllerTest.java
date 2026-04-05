@@ -13,7 +13,9 @@ import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.FilterService;
 import io.github.excalibase.service.PreferHeaderParser;
 import io.github.excalibase.service.QueryExecutionService;
+import io.github.excalibase.service.RlsQueryExecutor;
 import io.github.excalibase.service.TypeConversionService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -51,16 +53,19 @@ class ReadApiControllerTest {
     @Mock(lenient = true) private FilterService filterService;
     @Mock(lenient = true) private TypeConversionService typeConversionService;
     @Mock(lenient = true) private PreferHeaderParser preferParser;
+    @Mock(lenient = true) private RlsQueryExecutor rlsQueryExecutor;
 
     private ReadApiController controller;
     private TableInfo customersTable;
+    private HttpServletRequest mockRequest;
 
     @BeforeEach
     void setUp() {
+        mockRequest = mock(HttpServletRequest.class);
         controller = new ReadApiController(
                 queryExecutionService, openApiService, schemaService, validationService,
                 aggregationService, queryCompiler, jdbcTemplate, resultMapper,
-                filterService, typeConversionService, preferParser);
+                filterService, typeConversionService, preferParser, rlsQueryExecutor);
 
         customersTable = new TableInfo(
                 "customers",
@@ -84,7 +89,7 @@ class ReadApiControllerTest {
                 .thenReturn("{\"data\":[],\"pagination\":{}}");
 
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        ResponseEntity<?> response = controller.getRecords("customers", params, null, null);
+        ResponseEntity<?> response = controller.getRecords("customers", params, null, null, mockRequest);
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
     }
@@ -96,7 +101,7 @@ class ReadApiControllerTest {
                 .when(validationService).getValidatedTableInfo(anyString());
 
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        ResponseEntity<?> response = controller.getRecords("customers", params, null, null);
+        ResponseEntity<?> response = controller.getRecords("customers", params, null, null, mockRequest);
 
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
@@ -108,7 +113,7 @@ class ReadApiControllerTest {
                 .thenThrow(new RuntimeException("DB down"));
 
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        ResponseEntity<?> response = controller.getRecords("customers", params, null, null);
+        ResponseEntity<?> response = controller.getRecords("customers", params, null, null, mockRequest);
 
         assertThat(response.getStatusCode().value()).isEqualTo(500);
     }
@@ -124,7 +129,7 @@ class ReadApiControllerTest {
         when(resultMapper.mapJsonBody(any(), any()))
                 .thenReturn(new MappedResult(List.of(Map.of("customer_id", 1)), -1L));
 
-        ResponseEntity<Map<String, Object>> response = controller.getRecord("customers", "1", null, null);
+        ResponseEntity<Map<String, Object>> response = controller.getRecord("customers", "1", null, null, mockRequest);
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
     }

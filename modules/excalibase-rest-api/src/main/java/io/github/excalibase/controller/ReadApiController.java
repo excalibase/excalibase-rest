@@ -4,6 +4,7 @@ import io.github.excalibase.compiler.CompiledQuery;
 import io.github.excalibase.compiler.IQueryCompiler;
 import io.github.excalibase.model.ColumnInfo;
 import io.github.excalibase.model.TableInfo;
+import io.github.excalibase.security.UserContext;
 import io.github.excalibase.service.IAggregationService;
 import io.github.excalibase.service.IDatabaseSchemaService;
 import io.github.excalibase.service.IOpenApiService;
@@ -12,7 +13,9 @@ import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.FilterService;
 import io.github.excalibase.service.PreferHeaderParser;
 import io.github.excalibase.service.QueryExecutionService;
+import io.github.excalibase.service.RlsQueryExecutor;
 import io.github.excalibase.service.TypeConversionService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +33,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +60,7 @@ public class ReadApiController {
     private final FilterService filterService;
     private final TypeConversionService typeConversionService;
     private final PreferHeaderParser preferParser;
+    private final RlsQueryExecutor rlsQueryExecutor;
 
     @Value("${app.max-page-size:1000}")
     private int maxPageSize;
@@ -70,7 +75,8 @@ public class ReadApiController {
                               IResultMapper resultMapper,
                               FilterService filterService,
                               TypeConversionService typeConversionService,
-                              PreferHeaderParser preferParser) {
+                              PreferHeaderParser preferParser,
+                              RlsQueryExecutor rlsQueryExecutor) {
         this.queryExecutionService = queryExecutionService;
         this.openApiService = openApiService;
         this.schemaService = schemaService;
@@ -82,6 +88,7 @@ public class ReadApiController {
         this.filterService = filterService;
         this.typeConversionService = typeConversionService;
         this.preferParser = preferParser;
+        this.rlsQueryExecutor = rlsQueryExecutor;
     }
 
     // ─── GET /{table} ─────────────────────────────────────────────────────────
@@ -91,8 +98,10 @@ public class ReadApiController {
             @PathVariable String table,
             @RequestParam MultiValueMap<String, String> allParams,
             @RequestHeader(value = "Prefer", required = false) String prefer,
-            @RequestHeader(value = "Accept", required = false) String accept) {
+            @RequestHeader(value = "Accept", required = false) String accept,
+            HttpServletRequest request) {
         try {
+            UserContext ctx = UserContext.fromRequest(request);
             TableInfo tableInfo = validationService.getValidatedTableInfo(table);
 
             int offset = parseIntParam(allParams, "offset", 0);
@@ -120,14 +129,14 @@ public class ReadApiController {
 
             if (first != null || after != null || last != null || before != null) {
                 Map<String, Object> result = queryExecutionService.executeCursorQuery(
-                        table, tableInfo, filters, select, expand,
+                        ctx, table, tableInfo, filters, select, expand,
                         orderBy, orderDirection, first, after, last, before, maxPageSize);
                 return ResponseEntity.ok(result);
             }
 
             if (singular || countPref != null) {
                 Map<String, Object> result = queryExecutionService.executeListQuery(
-                        table, tableInfo, filters, select, expand,
+                        ctx, table, tableInfo, filters, select, expand,
                         orderBy, orderDirection, offset, limit, includeCount);
 
                 if (singular) {
@@ -156,7 +165,7 @@ public class ReadApiController {
             }
 
             String rawJson = queryExecutionService.executeListQueryRaw(
-                    table, tableInfo, filters, select, expand,
+                    ctx, table, tableInfo, filters, select, expand,
                     orderBy, orderDirection, offset, limit, false);
 
             return ResponseEntity.ok()
@@ -178,8 +187,10 @@ public class ReadApiController {
             @PathVariable String table,
             @PathVariable String id,
             @RequestParam(required = false) String select,
-            @RequestParam(required = false) String expand) {
+            @RequestParam(required = false) String expand,
+            HttpServletRequest request) {
         try {
+            UserContext ctx = UserContext.fromRequest(request);
             validationService.validateTablePermission(table, "SELECT");
             TableInfo tableInfo = validationService.getValidatedTableInfo(table);
 
@@ -199,7 +210,17 @@ public class ReadApiController {
             CompiledQuery compiled = queryCompiler.compile(table, tableInfo, pkFilter,
                     select, expand, null, "asc", 0, 1, false);
 
-            List<Map<String, Object>> rawRows = jdbcTemplate.queryForList(compiled.sql(), compiled.params());
+            List<Map<String, Object>> rawRows;
+            if (ctx != null) {
+                try {
+                    rawRows = rlsQueryExecutor.queryForList(ctx.userId(), ctx.claims(),
+                            compiled.sql(), compiled.params());
+                } catch (SQLException e) {
+                    throw new RuntimeException("RLS query failed: " + e.getMessage(), e);
+                }
+            } else {
+                rawRows = jdbcTemplate.queryForList(compiled.sql(), compiled.params());
+            }
             Map<String, Object> singleRow = (rawRows != null && !rawRows.isEmpty()) ? rawRows.get(0) : null;
             var mapped = resultMapper.mapJsonBody(singleRow, tableInfo);
 
