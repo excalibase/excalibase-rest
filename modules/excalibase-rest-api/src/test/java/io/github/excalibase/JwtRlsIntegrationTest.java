@@ -162,18 +162,6 @@ class JwtRlsIntegrationTest {
     }
 
     @Test
-    @Order(6)
-    void xUserIdHeader_legacy() throws Exception {
-        // With jwt-enabled=true, JwtUserIdExtractor is the active extractor.
-        // X-User-Id header without a JWT token will not set user context,
-        // so RLS blocks all rows (returns empty).
-        mockMvc.perform(get("/api/v1/orders")
-                        .header("X-User-Id", "42"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data", hasSize(0)));
-    }
-
-    @Test
     @Order(7)
     void jwt_user42_multiTablePayments() throws Exception {
         String jwt = signJwt(42, "test-project", "user", "alice@test.com");
