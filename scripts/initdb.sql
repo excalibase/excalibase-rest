@@ -364,3 +364,45 @@ CREATE INDEX IF NOT EXISTS idx_order_items_line_total ON order_items(line_total)
 CREATE INDEX IF NOT EXISTS idx_reviews_helpful_votes ON reviews(helpful_votes);
 
 ANALYZE;
+
+-- ====================
+-- RLS (ROW LEVEL SECURITY) TEST TABLE
+-- ====================
+CREATE TABLE rls_orders (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    product TEXT NOT NULL,
+    amount NUMERIC(10,2) NOT NULL
+);
+
+ALTER TABLE rls_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rls_orders FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY rls_user_isolation ON rls_orders
+    FOR ALL USING (user_id = current_setting('request.user_id', true));
+
+INSERT INTO rls_orders (user_id, product, amount) VALUES
+    ('alice', 'Widget A', 29.99),
+    ('alice', 'Widget B', 49.99),
+    ('bob',   'Gadget X', 99.99),
+    ('bob',   'Gadget Y', 149.99);
+
+CREATE TABLE rls_payments (
+    id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    amount NUMERIC(10,2) NOT NULL,
+    method TEXT NOT NULL
+);
+
+ALTER TABLE rls_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE rls_payments FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY rls_payment_isolation ON rls_payments
+    FOR ALL USING (user_id = current_setting('request.user_id', true));
+
+INSERT INTO rls_payments (user_id, amount, method) VALUES
+    ('alice', 29.99, 'card'),
+    ('alice', 49.99, 'paypal'),
+    ('bob',   99.99, 'card');
+
+-- NOTE: Grants to appuser are in 02-roles.sql (runs after this script)

@@ -8,7 +8,9 @@ import io.github.excalibase.model.TableInfo;
 import io.github.excalibase.service.IValidationService;
 import io.github.excalibase.service.FilterService;
 import io.github.excalibase.service.PreferHeaderParser;
+import io.github.excalibase.service.RlsQueryExecutor;
 import io.github.excalibase.service.TypeConversionService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -42,15 +44,19 @@ class WriteApiControllerTest {
     @Mock(lenient = true) private TypeConversionService typeConversionService;
     @Mock(lenient = true) private PreferHeaderParser preferParser;
     @Mock(lenient = true) private PlatformTransactionManager transactionManager;
+    @Mock(lenient = true) private RlsQueryExecutor rlsQueryExecutor;
 
     private WriteApiController controller;
     private TableInfo customersTable;
+    private HttpServletRequest mockRequest;
 
     @BeforeEach
     void setUp() {
+        mockRequest = mock(HttpServletRequest.class);
         controller = new WriteApiController(
                 commandCompiler, jdbcTemplate, validationService,
-                filterService, typeConversionService, preferParser, transactionManager);
+                filterService, typeConversionService, preferParser, transactionManager,
+                rlsQueryExecutor);
 
         customersTable = new TableInfo(
                 "customers",
@@ -70,21 +76,21 @@ class WriteApiControllerTest {
     @Test
     @DisplayName("createRecord_nullBody_returns400")
     void createRecord_nullBody_returns400() {
-        ResponseEntity<?> response = controller.createRecord("customers", null, null);
+        ResponseEntity<?> response = controller.createRecord("customers", null, null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
     @Test
     @DisplayName("createRecord_emptyMapBody_returns400")
     void createRecord_emptyMapBody_returns400() {
-        ResponseEntity<?> response = controller.createRecord("customers", Map.of(), null);
+        ResponseEntity<?> response = controller.createRecord("customers", Map.of(), null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
     @Test
     @DisplayName("createRecord_emptyListBody_returns400")
     void createRecord_emptyListBody_returns400() {
-        ResponseEntity<?> response = controller.createRecord("customers", List.of(), null);
+        ResponseEntity<?> response = controller.createRecord("customers", List.of(), null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -99,7 +105,7 @@ class WriteApiControllerTest {
                 .thenReturn(List.of(Map.of("customer_id", 1, "name", "Alice")));
         when(preferParser.getReturn(any())).thenReturn("representation");
 
-        ResponseEntity<?> response = controller.createRecord("customers", row, null);
+        ResponseEntity<?> response = controller.createRecord("customers", row, null, mockRequest);
 
         assertThat(response.getStatusCode().value()).isEqualTo(201);
     }
@@ -107,7 +113,7 @@ class WriteApiControllerTest {
     @Test
     @DisplayName("createRecord_invalidBody_returns400")
     void createRecord_invalidBody_returns400() {
-        ResponseEntity<?> response = controller.createRecord("customers", "not a map or list", null);
+        ResponseEntity<?> response = controller.createRecord("customers", "not a map or list", null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -117,7 +123,7 @@ class WriteApiControllerTest {
         doThrow(new ValidationException("col not found"))
                 .when(validationService).validateTablePermission(anyString(), anyString());
 
-        ResponseEntity<?> response = controller.createRecord("customers", Map.of("name", "test"), null);
+        ResponseEntity<?> response = controller.createRecord("customers", Map.of("name", "test"), null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -127,7 +133,7 @@ class WriteApiControllerTest {
     @DisplayName("updateRecord_nullBody_returns400")
     void updateRecord_nullBody_returns400() {
         ResponseEntity<?> response = controller.updateRecord("orders", "1",
-                new LinkedMultiValueMap<>(), null);
+                new LinkedMultiValueMap<>(), null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -135,7 +141,7 @@ class WriteApiControllerTest {
     @DisplayName("updateRecord_emptyListBody_returns400")
     void updateRecord_emptyListBody_returns400() {
         ResponseEntity<?> response = controller.updateRecord("orders", "1",
-                new LinkedMultiValueMap<>(), List.of());
+                new LinkedMultiValueMap<>(), List.of(), mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -143,7 +149,7 @@ class WriteApiControllerTest {
     @DisplayName("updateRecord_emptyMapBody_returns400")
     void updateRecord_emptyMapBody_returns400() {
         ResponseEntity<?> response = controller.updateRecord("orders", "1",
-                new LinkedMultiValueMap<>(), Map.of());
+                new LinkedMultiValueMap<>(), Map.of(), mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -152,7 +158,7 @@ class WriteApiControllerTest {
     void updateRecord_noIdNoFilters_returns400() {
         Map<String, Object> data = Map.of("status", "shipped");
         ResponseEntity<?> response = controller.updateRecord("orders", null,
-                new LinkedMultiValueMap<>(), data);
+                new LinkedMultiValueMap<>(), data, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -165,7 +171,7 @@ class WriteApiControllerTest {
         when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
 
         ResponseEntity<?> response = controller.updateRecord("customers", "99",
-                new LinkedMultiValueMap<>(), data);
+                new LinkedMultiValueMap<>(), data, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(404);
     }
 
@@ -174,7 +180,7 @@ class WriteApiControllerTest {
     @Test
     @DisplayName("patchRecord_emptyBody_returns400")
     void patchRecord_emptyBody_returns400() {
-        ResponseEntity<?> response = controller.patchRecord("customers", "1", Map.of(), null);
+        ResponseEntity<?> response = controller.patchRecord("customers", "1", Map.of(), null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -186,7 +192,7 @@ class WriteApiControllerTest {
         when(commandCompiler.patch(eq("customers"), any(), eq("99"), eq(data))).thenReturn(q);
         when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
 
-        ResponseEntity<?> response = controller.patchRecord("customers", "99", data, null);
+        ResponseEntity<?> response = controller.patchRecord("customers", "99", data, null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(404);
     }
 
@@ -196,7 +202,7 @@ class WriteApiControllerTest {
     @DisplayName("deleteRecord_noIdNoFilters_returns400")
     void deleteRecord_noIdNoFilters_returns400() {
         ResponseEntity<Map<String, Object>> response = controller.deleteRecord("customers", null,
-                new LinkedMultiValueMap<>(), null);
+                new LinkedMultiValueMap<>(), null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(400);
     }
 
@@ -208,7 +214,7 @@ class WriteApiControllerTest {
         when(jdbcTemplate.queryForList(anyString(), any(Object[].class))).thenReturn(List.of());
 
         ResponseEntity<Map<String, Object>> response = controller.deleteRecord("customers", "99",
-                new LinkedMultiValueMap<>(), null);
+                new LinkedMultiValueMap<>(), null, mockRequest);
         assertThat(response.getStatusCode().value()).isEqualTo(404);
     }
 
@@ -242,7 +248,7 @@ class WriteApiControllerTest {
 
         ResponseEntity<?> response = controller.createRecord(
                 "app_configurations", body,
-                "resolution=merge-duplicates");
+                "resolution=merge-duplicates", mockRequest);
 
         assertThat(response.getStatusCode().value()).isIn(200, 201);
         verify(commandCompiler).upsert(eq("app_configurations"), any(), any(), eq(List.of("key")));
@@ -275,7 +281,7 @@ class WriteApiControllerTest {
         body.put("name", "Alice");
 
         ResponseEntity<?> response = controller.createRecord(
-                "users", body, "resolution=merge-duplicates");
+                "users", body, "resolution=merge-duplicates", mockRequest);
 
         assertThat(response.getStatusCode().value()).isIn(200, 201);
         verify(commandCompiler).upsert(eq("users"), any(), any(), eq(List.of("id")));
@@ -304,7 +310,7 @@ class WriteApiControllerTest {
                 Map.of("name", "Bob")
         );
 
-        ResponseEntity<?> response = controller.createRecord("customers", bulk, "resolution=merge-duplicates");
+        ResponseEntity<?> response = controller.createRecord("customers", bulk, "resolution=merge-duplicates", mockRequest);
 
         // Should attempt upsert for each row
         verify(commandCompiler, atLeast(1)).upsert(eq("customers"), any(), any(), any());

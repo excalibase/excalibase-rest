@@ -101,6 +101,8 @@ app:
     user-context-enabled: true      # Enable RLS support
     user-id-extractor-type: header  # Extractor type: "header", "jwt", "oauth2", etc.
     user-id-header: X-User-Id       # Header name for user ID when using header extractor
+    jwt-enabled: ${JWT_ENABLED:false}
+    provisioning-url: ${PROVISIONING_URL:http://localhost:24005/api}
   
   # Query compiler: compile everything into a single SQL statement
   # Set to false to use the legacy multi-query approach

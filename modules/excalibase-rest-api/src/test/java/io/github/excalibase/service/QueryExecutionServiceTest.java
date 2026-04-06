@@ -33,13 +33,14 @@ class QueryExecutionServiceTest {
     @Mock private JdbcTemplate jdbcTemplate;
     @Mock private IResultMapper resultMapper;
     @Mock private FilterService filterService;
+    @Mock private RlsQueryExecutor rlsQueryExecutor;
 
     private QueryExecutionService service;
     private TableInfo customersTable;
 
     @BeforeEach
     void setUp() {
-        service = new QueryExecutionService(queryCompiler, jdbcTemplate, resultMapper, filterService);
+        service = new QueryExecutionService(queryCompiler, jdbcTemplate, resultMapper, filterService, rlsQueryExecutor);
         customersTable = new TableInfo(
                 "customers",
                 List.of(
